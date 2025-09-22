@@ -35,6 +35,14 @@ const sampleQuestions = [
   "What are the swim cut-off times?",
 ];
 
+const MAX_QUESTION_LENGTH = 500;
+const BANNED_PATTERNS = [
+  /ignore\s+(?:all|any)\s+previous\s+instructions/i,
+  /pretend\s+to\s+be/i,
+  /leak\s+.*prompt/i,
+  /reveal\s+.*system/i,
+];
+
 function uniqueCitations(citations?: Citation[]): Citation[] | undefined {
   if (!citations) return undefined;
   const map = new Map<string, Citation>();
@@ -45,6 +53,10 @@ function uniqueCitations(citations?: Citation[]): Citation[] | undefined {
     }
   });
   return Array.from(map.values());
+}
+
+function containsBannedPattern(text: string): boolean {
+  return BANNED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 export default function Home() {
@@ -100,11 +112,10 @@ export default function Home() {
     },
   });
 
-  const isReadyToAsk = useMemo(() => Boolean(document) && !uploadMutation.isPending && !exampleMutation.isPending, [
-    document,
-    uploadMutation.isPending,
-    exampleMutation.isPending,
-  ]);
+  const isReadyToAsk = useMemo(
+    () => Boolean(document) && !uploadMutation.isPending && !exampleMutation.isPending,
+    [document, uploadMutation.isPending, exampleMutation.isPending],
+  );
 
   const handleFileInput = (fileList: FileList | null) => {
     const file = fileList?.[0];
@@ -115,6 +126,11 @@ export default function Home() {
       return;
     }
 
+    if (file.size > 80 * 1024 * 1024) {
+      toast.error("PDF must be 80 MB or smaller.");
+      return;
+    }
+
     uploadMutation.mutate(file);
   };
 
@@ -122,6 +138,16 @@ export default function Home() {
     event.preventDefault();
     const trimmed = question.trim();
     if (!trimmed) {
+      return;
+    }
+
+    if (trimmed.length > MAX_QUESTION_LENGTH) {
+      toast.error("Question is too long. Please keep it under 500 characters.");
+      return;
+    }
+
+    if (containsBannedPattern(trimmed)) {
+      toast.error("That request is not allowed.");
       return;
     }
 
@@ -168,6 +194,15 @@ export default function Home() {
 
   const handleSelectExample = (slug: string) => {
     exampleMutation.mutate(slug);
+  };
+
+  const handleQuestionChange = (value: string) => {
+    if (value.length > MAX_QUESTION_LENGTH) {
+      toast.error("Question is too long. Please keep it under 500 characters.");
+      setQuestion(value.slice(0, MAX_QUESTION_LENGTH));
+    } else {
+      setQuestion(value);
+    }
   };
 
   return (
@@ -221,7 +256,7 @@ export default function Home() {
                     ? "Uploading guide..."
                     : "Click to browse or drop a PDF"}
                 </div>
-                <p className="text-xs text-zinc-500">PDF up to 20 MB</p>
+                <p className="text-xs text-zinc-500">PDF up to 80 MB</p>
               </label>
               {document && (
                 <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
@@ -366,13 +401,17 @@ export default function Home() {
                 <textarea
                   ref={textareaRef}
                   value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
+                  onChange={(event) => handleQuestionChange(event.target.value)}
                   placeholder={document ? "Ask a question about the guide" : "Upload or load a guide to start asking questions"}
+                  maxLength={MAX_QUESTION_LENGTH}
                   className="min-h-[100px] resize-none rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-800 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-indigo-100"
                 />
                 <div className="flex items-center justify-between text-xs text-zinc-500">
                   <span>{document ? document.filename : "No guide loaded yet"}</span>
-                  <span>{messages.filter((msg) => msg.role === "assistant").length} answers</span>
+                  <span>
+                    {messages.filter((msg) => msg.role === "assistant").length} answers · {question.length}/
+                    {MAX_QUESTION_LENGTH}
+                  </span>
                 </div>
                 <div className="flex items-center justify-end">
                   <button

@@ -1,11 +1,11 @@
-﻿# WORK IN PROGRESS
-
-# Ask My Race
+﻿# Ask My Race
 
 Ask My Race lets athletes upload a triathlon race guide, ask natural language questions, and receive answers grounded in the source PDF with page-level citations. The project is split into two deployable parts:
 
 - **backend/** – FastAPI service that ingests PDFs, builds LangChain retrieval indexes, and answers questions via OpenAI.
-- **frontend/** – Next.js (App Router) UI built for Vercel that handles PDF upload, demo guide selection, and chat-style Q&A.
+- **frontend/** – Next.js (App Router) UI built for Vercel that handles PDF upload, demo guide selection, and chat-style Q&A. 
+
+### Visit the live app at https://ask-my-race.vercel.app/.
 
 ## Features
 
@@ -14,6 +14,7 @@ Ask My Race lets athletes upload a triathlon race guide, ask natural language qu
 - In-memory document registry for quick iteration; easy to swap for a persistent store later.
 - React Query powered UI with upload progress, demo guides, and citation chips.
 - Demo library automatically surfaces PDFs from `race_examples/` for one-click testing.
+- Safety guardrails: file size limits, triathlon keyword heuristics, prompt-abuse filtering, and rate limiting.
 
 ## Requirements
 
@@ -37,7 +38,7 @@ uvicorn backend.app.main:app --reload
 
 API endpoints:
 
-- `POST /upload` – upload a PDF, receive a `document_id`.
+- `POST /upload` – upload a PDF (≤80 MB), receive a `document_id`.
 - `POST /ask` – submit `{ document_id, question }`, returns answer + citations.
 - `GET /examples` – list bundled demo guides from `race_examples/`.
 - `POST /examples/{slug}` – load a demo guide without uploading manually.
@@ -54,7 +55,7 @@ npm run dev
 
 Visit http://localhost:3000 to upload a PDF or pick a demo guide and start asking questions.
 
-### Lint & Build
+### Lint & build
 
 ```bash
 npm run lint
@@ -67,9 +68,9 @@ Deploy the frontend to Vercel with `npm run build`. Remember to set `NEXT_PUBLIC
 
 Place PDF files in `race_examples/`. They are exposed via the backend’s `/examples` endpoints and rendered in the frontend sidebar for quick demos.
 
-## Roadmap Ideas
+## Safety & Guardrails
 
-- Persist embeddings/documents to an external vector store (Chroma, Supabase, Pinecone).
-- Streaming responses and typing indicators in the chat UI.
-- Authentication + per-user document storage.
-- Automated evaluation suite comparing question/answer accuracy across guides.
+- Question input trimmed to 500 characters with banned-pattern filters for prompt injection attempts.
+- Backend rate limiting on uploads and questions per IP.
+- File size enforced at 80 MB with simple triathlon keyword heuristics (rejects obviously unrelated PDFs).
+- System prompt reminds the model to ignore malicious instructions inside PDF excerpts.
