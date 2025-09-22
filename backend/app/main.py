@@ -244,8 +244,22 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     settings = get_settings()
     top_chunks = entry.similarity_search(query_embedding, top_k=settings.top_k)
     answer = answer_question(payload.question, payload.context, top_chunks)
-    citations = [Citation(section=chunk.section, page=chunk.page) for chunk in top_chunks]
+    citations = [
+        Citation(
+            section=chunk.section,
+            page=chunk.page,
+            excerpt=_summarize_excerpt(chunk.text),
+        )
+        for chunk in top_chunks
+    ]
     return AskResponse(answer=answer, citations=citations)
+
+
+def _summarize_excerpt(text: str) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= 220:
+        return cleaned
+    return cleaned[:217] + "..."
 
 
 @app.get("/health")

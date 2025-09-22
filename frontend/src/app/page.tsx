@@ -250,7 +250,7 @@ export default function Home() {
           <div>
             <h1 className="text-3xl font-semibold text-zinc-900">Ask My Race</h1>
             <p className="text-sm text-zinc-600">
-              Upload a triathlon athlete guide and ask follow-up questions with citations.
+              Upload a triathlon athlete guide and ask follow-up questions with context-aware answers.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -420,7 +420,7 @@ export default function Home() {
                             {message.citations.map((citation) => (
                               <span
                                 key={`${citation.section}-${citation.page}`}
-                                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600"
+                                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600" title={citation.excerpt}
                               >
                                 {citation.section} — p.{citation.page}
                               </span>

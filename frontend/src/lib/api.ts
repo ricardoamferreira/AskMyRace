@@ -10,6 +10,7 @@ export interface UploadResponse {
 export interface Citation {
   section: string;
   page: number;
+  excerpt: string;
 }
 
 export interface AskResponse {

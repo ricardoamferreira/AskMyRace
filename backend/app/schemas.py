@@ -16,6 +16,7 @@ class UploadResponse(BaseModel):
 class Citation(BaseModel):
     section: str
     page: int
+    excerpt: str
 
 
 class AskRequest(BaseModel):
