@@ -380,6 +380,11 @@ export default function Home() {
 
           <main className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white shadow-sm">
             <div className="flex-1 overflow-y-auto px-6 py-6">
+              {messages.length > 0 && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                  Please note that this is a work in progress; answers may contain errors.
+                </div>
+              )}
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-zinc-500">
                   <Bot className="h-10 w-10 text-zinc-400" />
