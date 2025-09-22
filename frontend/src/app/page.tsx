@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef, useState, KeyboardEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
@@ -36,6 +36,7 @@ const sampleQuestions = [
 ];
 
 const MAX_QUESTION_LENGTH = 500;
+const MAX_HISTORY_LENGTH = 1500;
 const BANNED_PATTERNS = [
   /ignore\s+(?:all|any)\s+previous\s+instructions/i,
   /pretend\s+to\s+be/i,
@@ -59,11 +60,24 @@ function containsBannedPattern(text: string): boolean {
   return BANNED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function buildHistory(messages: Message[]): string | undefined {
+  if (messages.length === 0) return undefined;
+  const recent = messages
+    .slice(-6)
+    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+    .join("\n");
+  if (!recent) return undefined;
+  return recent.length > MAX_HISTORY_LENGTH
+    ? recent.slice(recent.length - MAX_HISTORY_LENGTH)
+    : recent;
+}
+
 export default function Home() {
   const [document, setDocument] = useState<UploadResponse | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   const examplesQuery = useQuery({
     queryKey: ["examples"],
@@ -103,8 +117,15 @@ export default function Home() {
   });
 
   const askMutation = useMutation({
-    mutationFn: async ({ documentId, query }: { documentId: string; query: string }) =>
-      askQuestion(documentId, query),
+    mutationFn: async ({
+      documentId,
+      query,
+      history,
+    }: {
+      documentId: string;
+      query: string;
+      history?: string;
+    }) => askQuestion(documentId, query, history),
     onError: (error) => {
       const message =
         error instanceof Error ? error.message : "Unable to generate an answer.";
@@ -134,8 +155,7 @@ export default function Home() {
     uploadMutation.mutate(file);
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleAsk = () => {
     const trimmed = question.trim();
     if (!trimmed) {
       return;
@@ -156,6 +176,12 @@ export default function Home() {
       return;
     }
 
+    if (!isReadyToAsk || askMutation.isPending) {
+      return;
+    }
+
+    const history = buildHistory(messages);
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -166,7 +192,7 @@ export default function Home() {
     setQuestion("");
 
     askMutation.mutate(
-      { documentId: document.document_id, query: trimmed },
+      { documentId: document.document_id, query: trimmed, history },
       {
         onSuccess: (data) => {
           setMessages((prev) => [
@@ -181,6 +207,18 @@ export default function Home() {
         },
       },
     );
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    handleAsk();
+  };
+
+  const handleTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleAsk();
+    }
   };
 
   const handleSampleQuestion = (value: string) => {
@@ -396,12 +434,13 @@ export default function Home() {
               )}
             </div>
 
-            <form onSubmit={handleSubmit} className="border-t border-zinc-200 px-6 py-4">
+            <form ref={formRef} onSubmit={handleSubmit} className="border-t border-zinc-200 px-6 py-4">
               <fieldset className="flex flex-col gap-3" disabled={askMutation.isPending}>
                 <textarea
                   ref={textareaRef}
                   value={question}
                   onChange={(event) => handleQuestionChange(event.target.value)}
+                  onKeyDown={handleTextareaKeyDown}
                   placeholder={document ? "Ask a question about the guide" : "Upload or load a guide to start asking questions"}
                   maxLength={MAX_QUESTION_LENGTH}
                   className="min-h-[100px] resize-none rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-800 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-indigo-100"

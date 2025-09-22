@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,6 +26,11 @@ class AskRequest(BaseModel):
         max_length=500,
         description="User question limited to 500 characters to reduce injection attempts.",
     )
+    context: Optional[str] = Field(
+        default=None,
+        max_length=1500,
+        description="Optional prior conversation to help with follow-up questions.",
+    )
 
     @field_validator("question", mode="before")
     @classmethod
@@ -33,6 +38,16 @@ class AskRequest(BaseModel):
         text = (value or "").strip()
         if not text:
             raise ValueError("Question cannot be empty.")
+        return " ".join(text.split())
+
+    @field_validator("context", mode="before")
+    @classmethod
+    def sanitize_context(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
         return " ".join(text.split())
 
 

@@ -145,8 +145,9 @@ def list_example_guides() -> List[ExampleGuide]:
 
 
 def _looks_like_triathlon_guide(chunks: Iterable[PageChunk]) -> bool:
-    joined_text = " ".join(chunk.text for chunk in list(chunks)[:10])
-    lower_text = joined_text.lower()
+    pages = list(chunks)
+    sample_text = " ".join(chunk.text for chunk in pages[:10])
+    lower_text = sample_text.lower()
     matches = sum(1 for keyword in TRIATHLON_KEYWORDS if keyword in lower_text)
     return matches >= MIN_KEYWORD_MATCHES
 
@@ -171,9 +172,9 @@ def _require_rate_limit(limiter: RateLimiter, request: Request, error_message: s
         raise HTTPException(status_code=429, detail=error_message)
 
 
-def _check_question_for_abuse(question: str) -> None:
+def _check_text_for_abuse(text: str) -> None:
     for pattern in BANNED_PATTERNS:
-        if pattern.search(question):
+        if pattern.search(text):
             raise HTTPException(
                 status_code=400,
                 detail="That request was blocked because it attempts to override safety instructions.",
@@ -223,7 +224,9 @@ async def load_example(slug: str) -> UploadResponse:
 @app.post("/ask", response_model=AskResponse)
 async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     _require_rate_limit(ask_rate_limiter, request, "Too many questions from this IP. Please slow down.")
-    _check_question_for_abuse(payload.question)
+    _check_text_for_abuse(payload.question)
+    if payload.context:
+        _check_text_for_abuse(payload.context)
 
     registry = document_registry.get_registry()
     try:
@@ -231,10 +234,16 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    query_embedding = embed_query(payload.question)
+    combined_query = payload.question
+    if payload.context:
+        combined_query = (
+            f"{payload.question}\n\nPrevious conversation context:\n{payload.context}"
+        )
+
+    query_embedding = embed_query(combined_query)
     settings = get_settings()
     top_chunks = entry.similarity_search(query_embedding, top_k=settings.top_k)
-    answer = answer_question(payload.question, top_chunks)
+    answer = answer_question(payload.question, payload.context, top_chunks)
     citations = [Citation(section=chunk.section, page=chunk.page) for chunk in top_chunks]
     return AskResponse(answer=answer, citations=citations)
 

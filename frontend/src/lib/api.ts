@@ -43,11 +43,20 @@ export async function uploadGuide(file: File): Promise<UploadResponse> {
 export async function askQuestion(
   documentId: string,
   question: string,
+  context?: string,
 ): Promise<AskResponse> {
+  const payload: Record<string, unknown> = {
+    document_id: documentId,
+    question,
+  };
+  if (context && context.trim().length > 0) {
+    payload.context = context.trim();
+  }
+
   const response = await fetch(`${API_BASE_URL}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ document_id: documentId, question }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
