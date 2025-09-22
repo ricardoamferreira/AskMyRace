@@ -287,7 +287,11 @@ def _ensure_pdf_size(file: UploadFile, file_bytes: bytes) -> None:
     if size > MAX_PDF_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="PDF exceeds 80 MB limit.")
 
-    if not file.filename.lower().endswith(".pdf"):
+    filename = file.filename
+    if not isinstance(filename, str) or not filename.strip():
+        raise HTTPException(status_code=400, detail="Filename is required.")
+
+    if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Filename must end with .pdf")
 
 
