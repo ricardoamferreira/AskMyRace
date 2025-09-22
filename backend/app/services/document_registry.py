@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,6 +13,7 @@ class Chunk:
     text: str
     page: int
     section: str
+    order: int
     embedding: np.ndarray
 
 
@@ -29,12 +30,31 @@ class DocumentEntry:
             return []
         embeddings = np.vstack([chunk.embedding for chunk in self.chunks])
         norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_embedding)
-        # Guard against zero division when embeddings are zero-vectors
         similarities = (
             embeddings @ query_embedding
         ) / np.where(norms == 0, 1e-10, norms)
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        return [self.chunks[i] for i in top_indices]
+        anchor_indices = np.argsort(similarities)[::-1][:top_k]
+
+        selected: List[Chunk] = []
+        seen_ids: set[str] = set()
+
+        for idx in anchor_indices:
+            anchor = self.chunks[idx]
+            if anchor.id in seen_ids:
+                continue
+            selected.append(anchor)
+            seen_ids.add(anchor.id)
+
+            for candidate in self.chunks:
+                if candidate.page != anchor.page:
+                    continue
+                if candidate.id in seen_ids:
+                    continue
+                selected.append(candidate)
+                seen_ids.add(candidate.id)
+                break
+
+        return selected
 
 
 class DocumentRegistry:

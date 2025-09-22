@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import List
 
@@ -8,9 +8,12 @@ from langchain_openai import ChatOpenAI
 from backend.app.config import get_settings
 from backend.app.services.document_registry import Chunk
 
-SYSTEM_PROMPT = """You are a concise triathlon race assistant. Answer questions using only the provided context. "
-"""If the answer is not contained in the context, respond with "I couldn't find that in the athlete guide." "
-"""Always include citations for each statement in the format [Section — p.X]."""
+SYSTEM_PROMPT = (
+    "You are a concise triathlon race assistant. Answer questions using only the provided context. "
+    "If the answer is not contained in the context, respond with \"I couldn't find that in the athlete guide.\" "
+    "Always include citations for each statement in the format [Section - p.X]. "
+    "Synthesize the key facts (times, locations, requirements) in your own words instead of copying large blocks of text."
+)
 
 
 prompt = ChatPromptTemplate.from_messages(
@@ -39,7 +42,7 @@ def answer_question(question: str, top_chunks: List[Chunk]) -> str:
     llm = ChatOpenAI(
         api_key=settings.openai_api_key,
         model=settings.chat_model,
-        temperature=0,
+        temperature=1,
     )
     chain = prompt | llm
     response = chain.invoke(

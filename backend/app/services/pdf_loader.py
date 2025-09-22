@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import io
 import re
@@ -16,13 +16,14 @@ class PageChunk:
     text: str
     page: int
     section: str
+    order: int
 
 
 def load_pdf_chunks(file_bytes: bytes) -> Tuple[List[PageChunk], int]:
     reader = PdfReader(io.BytesIO(file_bytes))
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=150,
+        chunk_size=800,
+        chunk_overlap=200,
         add_start_index=True,
     )
     chunk_list: List[PageChunk] = []
@@ -39,6 +40,7 @@ def load_pdf_chunks(file_bytes: bytes) -> Tuple[List[PageChunk], int]:
                     text=chunk_text,
                     page=page_index,
                     section=section,
+                    order=len(chunk_list),
                 )
             )
     return chunk_list, len(reader.pages)

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
@@ -15,7 +15,7 @@ from backend.app.services.embedding import embed_chunks, embed_query
 from backend.app.services.pdf_loader import PageChunk, load_pdf_chunks
 from backend.app.services.qa import answer_question
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI(title="Ask My Race API", version="0.1.0")
 
@@ -53,6 +53,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
                 text=chunk.text,
                 page=chunk.page,
                 section=chunk.section,
+                order=chunk.order,
                 embedding=vector,
             )
         )
