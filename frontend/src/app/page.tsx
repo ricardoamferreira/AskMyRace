@@ -60,7 +60,20 @@ function containsBannedPattern(text: string): boolean {
   return BANNED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-function buildHistory(messages: Message[]): string | undefined {
+const FOLLOW_UP_REGEX = /\b(it|they|them|that|those|this|these|there|again)\b/i;
+const FOLLOW_UP_STARTERS = [/^what about\b/i, /^how about\b/i, /^and\b/i, /^what else\b/i, /^same\b/i];
+
+function shouldAttachHistory(question: string): boolean {
+  const trimmed = question.trim();
+  if (!trimmed) return false;
+  if (trimmed.length <= 12) return true;
+  if (FOLLOW_UP_STARTERS.some((pattern) => pattern.test(trimmed))) return true;
+  if (trimmed.length <= 50 && FOLLOW_UP_REGEX.test(trimmed)) return true;
+  return false;
+}
+
+function buildHistory(messages: Message[], question: string): string | undefined {
+  if (!shouldAttachHistory(question)) return undefined;
   if (messages.length === 0) return undefined;
   const recent = messages
     .slice(-6)
@@ -180,7 +193,7 @@ export default function Home() {
       return;
     }
 
-    const history = buildHistory(messages);
+    const history = buildHistory(messages, trimmed);
 
     const userMessage: Message = {
       id: crypto.randomUUID(),

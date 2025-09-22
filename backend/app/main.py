@@ -6,7 +6,7 @@ import uuid
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List
+from typing import Deque, Dict, Iterable, List, Tuple
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -69,7 +69,10 @@ MIN_KEYWORD_MATCHES = 3
 RACK_TIME_PATTERN = re.compile(r"\b\d{1,2}:\d{2}\b")
 TIME_RANGE_PATTERN = re.compile(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}")
 DAY_PATTERN = re.compile(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+", re.IGNORECASE)
-DATE_TIME_PATTERN = re.compile(r"(?P<day_phrase>(?P<day_name>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+),\s*(?P<time_range>\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", re.IGNORECASE)
+TRANSITION_LINE_PATTERN = re.compile(
+    r"(Transition\s+(?P<num>[12])[^,\n]*?)(?:,\s*)?(?:(?P<day_phrase>(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+))?(?:[^0-9]{0,80})?(?P<time_range>\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})",
+    re.IGNORECASE,
+)
 
 
 class RateLimiter:
@@ -168,103 +171,147 @@ def _humanize(value: str) -> str:
 
 
 
-def _has_transition_schedule(text: str) -> bool:
-    lower = text.lower()
-    if not RACK_TIME_PATTERN.search(text):
-        return False
-    keywords = ("transition 1", "transition one", "t1", "bike check-in", "bike check in", "blue bag")
+def _needs_transition(question: str, transition: str) -> bool:
+    lower = question.lower()
+    if transition == "1":
+        keywords = (
+            "transition 1",
+            "transition one",
+            "t1",
+            "rack",
+            "bike bag",
+            "blue bag",
+            "bike check",
+        )
+    else:
+        keywords = (
+            "transition 2",
+            "transition two",
+            "t2",
+            "red bag",
+            "run bag",
+            "run gear",
+            "run equipment",
+        )
     return any(keyword in lower for keyword in keywords)
 
 
+def _has_transition_schedule(text: str, transition: str) -> bool:
+    lower = text.lower()
+    if f"transition {transition}" not in lower:
+        return False
+    if not RACK_TIME_PATTERN.search(text):
+        return False
+    if transition == "1":
+        keywords = ("transition 1", "bike", "blue bag", "rack")
+    else:
+        keywords = ("transition 2", "red bag", "run bag", "transition two")
+    return any(keyword in lower for keyword in keywords)
 
-def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk]) -> List[Chunk]:
-    seen_ids = {chunk.id for chunk in selected}
-    if any(_has_transition_schedule(chunk.text) for chunk in selected):
-        return selected
-    for chunk in entry.chunks:
-        if chunk.id in seen_ids:
-            continue
-        if _has_transition_schedule(chunk.text):
-            selected.insert(0, chunk)
-            break
+
+def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk], question: str) -> List[Chunk]:
+    question_lower = question.lower()
+    needs_t1 = _needs_transition(question_lower, "1")
+    needs_t2 = _needs_transition(question_lower, "2")
+    if needs_t1 and not any(_has_transition_schedule(chunk.text, "1") for chunk in selected):
+        for chunk in entry.chunks:
+            if chunk.id in {c.id for c in selected}:
+                continue
+            if _has_transition_schedule(chunk.text, "1"):
+                selected.insert(0, chunk)
+                break
+    if needs_t2 and not any(_has_transition_schedule(chunk.text, "2") for chunk in selected):
+        for chunk in entry.chunks:
+            if chunk.id in {c.id for c in selected}:
+                continue
+            if _has_transition_schedule(chunk.text, "2"):
+                selected.append(chunk)
+                break
     return selected
 
 
-
-def _extract_transition_schedule_notes(entry: DocumentEntry, selected: List[Chunk]) -> List[str]:
+def _extract_transition_schedule_notes(entry: DocumentEntry, question: str, selected: List[Chunk]) -> List[str]:
+    question_lower = question.lower()
     notes: list[str] = []
-    explicit_pre: tuple[str, str] | None = None
-    explicit_race: tuple[str, str] | None = None
-    for chunk in entry.chunks:
-        lower_text = chunk.text.lower()
-        if "transition 1" not in lower_text:
-            continue
-        for match in DATE_TIME_PATTERN.finditer(chunk.text):
-            day_phrase = match.group("day_phrase").strip()
-            day_name = match.group("day_name").lower()
-            time_range = match.group("time_range")
-            start_hour = int(time_range.split(":")[0])
-            if "saturday" in day_name and start_hour >= 7:
-                explicit_pre = (day_phrase, time_range)
-            elif ("sunday" in day_name or "race" in day_name) and start_hour <= 6:
-                explicit_race = (day_phrase, time_range)
-        if explicit_pre and explicit_race:
-            break
-
-    if not explicit_pre or not explicit_race:
-        pre_race_data: list[tuple[str | None, str, int, int]] = []
-        race_morning_data: list[tuple[str | None, str, int]] = []
-        seen_pre: set[str] = set()
-        seen_race: set[str] = set()
-        for chunk in entry.chunks:
-            if "transition 1" not in chunk.text.lower():
-                continue
-            for day_label, time_range in _extract_transition_notes_from_text(chunk.text):
-                start_str, end_str = [part.strip() for part in time_range.split("-", 1)]
-                start_hour, start_min = map(int, start_str.split(":"))
-                end_hour, end_min = map(int, end_str.split(":"))
-                if start_hour <= 6:
-                    if time_range not in seen_race:
-                        seen_race.add(time_range)
-                        start_minutes = start_hour * 60 + start_min
-                        race_morning_data.append((day_label, time_range, start_minutes))
-                elif 7 <= start_hour <= 12:
-                    start_minutes = start_hour * 60 + start_min
-                    end_minutes = end_hour * 60 + end_min
-                    duration = end_minutes - start_minutes
-                    if duration >= 240 and time_range not in seen_pre:
-                        seen_pre.add(time_range)
-                        pre_race_data.append((day_label, time_range, start_hour, duration))
-        if not explicit_pre and pre_race_data:
-            preferred_pre = next((item for item in pre_race_data if item[0] and "saturday" in item[0].lower()), None)
-            if preferred_pre is None:
-                preferred_pre = max(pre_race_data, key=lambda item: (item[0] is not None, item[2], item[3]))
-            if preferred_pre:
-                day_label, time_range, _, _ = preferred_pre
-                explicit_pre = (day_label or "Pre-race day", time_range)
-        if not explicit_race and race_morning_data:
-            filtered = [item for item in race_morning_data if 4 <= int(item[1].split(":")[0]) <= 6]
-            preferred_race = next((item for item in filtered if item[0] and ("sunday" in item[0].lower() or "race" in item[0].lower())), None)
-            if preferred_race is None:
-                preferred_race = min(filtered or race_morning_data, key=lambda item: item[2])
-            if preferred_race:
-                day_label, time_range, _ = preferred_race
-                explicit_race = (day_label or "Race morning", time_range)
-
-    if explicit_pre:
-        day_phrase, time_range = explicit_pre
-        notes.append(f"Transition 1 pre-race ({day_phrase}): {time_range}")
-    if explicit_race:
-        day_phrase, time_range = explicit_race
-        notes.append(f"Transition 1 race morning ({day_phrase}): {time_range} (final checks only)")
+    if _needs_transition(question_lower, "1"):
+        notes.extend(_build_transition_notes(entry, "1"))
+    if _needs_transition(question_lower, "2"):
+        notes.extend(_build_transition_notes(entry, "2"))
     return notes
 
 
-def _extract_transition_notes_from_text(text: str) -> List[tuple[str | None, str]]:
+def _build_transition_notes(entry: DocumentEntry, transition: str) -> List[str]:
+    collected: list[tuple[str | None, str]] = []
+    seen: set[tuple[str | None, str]] = set()
+    for chunk in entry.chunks:
+        if f"transition {transition}" not in chunk.text.lower():
+            continue
+        for item in _extract_transition_notes_from_text(chunk.text, transition):
+            key = (item[0], item[1])
+            if key not in seen:
+                seen.add(key)
+                collected.append(item)
+    if not collected:
+        return []
+    if transition == "1":
+        return _select_transition1_notes(collected)
+    return _select_transition2_notes(collected)
+
+
+def _select_transition1_notes(entries: List[tuple[str | None, str]]) -> List[str]:
+    pre_candidates = [item for item in entries if item[0] and "saturday" in item[0].lower()]
+    if not pre_candidates:
+        pre_candidates = [item for item in entries if item[0] and "friday" in item[0].lower()]
+    pre_note = pre_candidates[0] if pre_candidates else None
+    race_candidates = [item for item in entries if item[0] and ("sunday" in item[0].lower() or "race" in item[0].lower())]
+    if not race_candidates:
+        race_candidates = [item for item in entries if _is_race_morning_time(item[1])]
+    race_note = race_candidates[0] if race_candidates else None
+    notes = []
+    if pre_note:
+        day_label, time_range = pre_note
+        notes.append(f"Transition 1 check-in ({day_label or 'Pre-race day'}): {time_range}")
+    if race_note:
+        day_label, time_range = race_note
+        label_text = day_label or "Race morning"
+        notes.append(f"Transition 1 race morning ({label_text}): {time_range} (final checks only)")
+    return notes
+
+
+def _select_transition2_notes(entries: List[tuple[str | None, str]]) -> List[str]:
+    friday = [item for item in entries if item[0] and "friday" in item[0].lower()]
+    saturday = [item for item in entries if item[0] and "saturday" in item[0].lower()]
+    notes = []
+    if friday:
+        day_label, time_range = friday[0]
+        notes.append(f"Transition 2 red-bag check-in ({day_label}): {time_range}")
+    if saturday:
+        day_label, time_range = saturday[0]
+        notes.append(f"Transition 2 red-bag check-in ({day_label}): {time_range}")
+    if not notes:
+        for day_label, time_range in entries[:2]:
+            notes.append(f"Transition 2 red-bag check-in ({day_label or 'Pre-race'}): {time_range}")
+    return notes
+
+
+def _is_race_morning_time(time_range: str) -> bool:
+    start_hour = int(time_range.split(":")[0])
+    return start_hour <= 6
+
+
+def _extract_transition_notes_from_text(text: str, transition: str) -> List[tuple[str | None, str]]:
     results: list[tuple[str | None, str]] = []
+    for match in TRANSITION_LINE_PATTERN.finditer(text):
+        if match.group("num") == transition:
+            day_phrase = match.group("day_phrase")
+            time_range = match.group("time_range")
+            results.append((day_phrase.strip() if day_phrase else None, time_range))
+    if results:
+        return results
     day_matches = [(match.group().strip(), match.start()) for match in DAY_PATTERN.finditer(text)]
     lowered = text.lower()
-    for match in re.finditer(r"transition 1", lowered):
+    target = f"transition {transition}"
+    for match in re.finditer(target, lowered):
         idx = match.start()
         nearest_day: str | None = None
         for day_label, pos in day_matches:
@@ -272,8 +319,6 @@ def _extract_transition_notes_from_text(text: str) -> List[tuple[str | None, str
                 nearest_day = day_label
             else:
                 break
-        if nearest_day is None and day_matches:
-            nearest_day = day_matches[0][0]
         segment = text[idx:idx + 800]
         time_ranges = TIME_RANGE_PATTERN.findall(segment)
         for time_range in time_ranges:
@@ -365,8 +410,8 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     query_embedding = embed_query(combined_query)
     settings = get_settings()
     top_chunks = entry.similarity_search(query_embedding, top_k=settings.top_k)
-    top_chunks = _augment_with_schedule_chunks(entry, top_chunks)
-    helper_notes = _extract_transition_schedule_notes(entry, top_chunks)
+    top_chunks = _augment_with_schedule_chunks(entry, top_chunks, payload.question)
+    helper_notes = _extract_transition_schedule_notes(entry, payload.question, top_chunks)
     helper_text = " | ".join(helper_notes) if helper_notes else None
     answer = answer_question(payload.question, payload.context, helper_text, top_chunks)
     citations = [
