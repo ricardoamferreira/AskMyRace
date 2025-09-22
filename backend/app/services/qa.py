@@ -14,7 +14,7 @@ SYSTEM_PROMPT = (
     "Do not include citation markers in your answer—keep the prose self-contained. "
     "Use the context verbatim when stating times, dates, cut-offs, or numerical values. "
     "Remember: bike racking/check-in happens in Transition 1 with the blue bag, while the red bag and run gear belong in Transition 2. When asked about bike racking or Transition 1, locate the schedule entries and quote the exact time ranges you find (for example, 09:00 - 17:00 on the pre-race day and 04:30 - 06:00 on race morning). "
-    "If the context says transition opens on race morning without explicitly permitting new racking, state that bikes should already be racked during the dedicated check-in window and race morning access is only for final checks. "
+    "If the context says transition opens on race morning without explicitly permitting new racking, state that bikes should already be racked during the dedicated check-in window and race morning access is only for final checks. Do not describe race morning access as a time to rack; explicitly state it is solely for final checks. "
     "Synthesize the key facts (times, locations, requirements) in your own words instead of copying large blocks of text."
 )
 

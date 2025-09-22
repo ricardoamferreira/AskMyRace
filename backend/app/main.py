@@ -69,6 +69,7 @@ MIN_KEYWORD_MATCHES = 3
 RACK_TIME_PATTERN = re.compile(r"\b\d{1,2}:\d{2}\b")
 TIME_RANGE_PATTERN = re.compile(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}")
 DAY_PATTERN = re.compile(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+", re.IGNORECASE)
+DATE_TIME_PATTERN = re.compile(r"(?P<day_phrase>(?P<day_name>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+),\s*(?P<time_range>\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", re.IGNORECASE)
 
 
 class RateLimiter:
@@ -191,55 +192,71 @@ def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk]) -
 
 
 def _extract_transition_schedule_notes(entry: DocumentEntry, selected: List[Chunk]) -> List[str]:
-    pre_race_data: list[tuple[str | None, str, int, int]] = []
-    race_morning_data: list[tuple[str | None, str, int]] = []
-    seen_pre: set[str] = set()
-    seen_race: set[str] = set()
+    notes: list[str] = []
+    explicit_pre: tuple[str, str] | None = None
+    explicit_race: tuple[str, str] | None = None
     for chunk in entry.chunks:
-        if "transition 1" not in chunk.text.lower():
+        lower_text = chunk.text.lower()
+        if "transition 1" not in lower_text:
             continue
-        for day_label, time_range in _extract_transition_notes_from_text(chunk.text):
-            start_str, end_str = [part.strip() for part in time_range.split("-", 1)]
-            start_hour, start_min = map(int, start_str.split(":"))
-            end_hour, end_min = map(int, end_str.split(":"))
-            if start_hour <= 6:
-                if time_range not in seen_race:
-                    seen_race.add(time_range)
-                    start_minutes = start_hour * 60 + start_min
-                    race_morning_data.append((day_label, time_range, start_minutes))
-            elif 7 <= start_hour <= 12:
-                if time_range not in seen_pre:
-                    seen_pre.add(time_range)
+        for match in DATE_TIME_PATTERN.finditer(chunk.text):
+            day_phrase = match.group("day_phrase").strip()
+            day_name = match.group("day_name").lower()
+            time_range = match.group("time_range")
+            start_hour = int(time_range.split(":")[0])
+            if "saturday" in day_name and start_hour >= 7:
+                explicit_pre = (day_phrase, time_range)
+            elif ("sunday" in day_name or "race" in day_name) and start_hour <= 6:
+                explicit_race = (day_phrase, time_range)
+        if explicit_pre and explicit_race:
+            break
+
+    if not explicit_pre or not explicit_race:
+        pre_race_data: list[tuple[str | None, str, int, int]] = []
+        race_morning_data: list[tuple[str | None, str, int]] = []
+        seen_pre: set[str] = set()
+        seen_race: set[str] = set()
+        for chunk in entry.chunks:
+            if "transition 1" not in chunk.text.lower():
+                continue
+            for day_label, time_range in _extract_transition_notes_from_text(chunk.text):
+                start_str, end_str = [part.strip() for part in time_range.split("-", 1)]
+                start_hour, start_min = map(int, start_str.split(":"))
+                end_hour, end_min = map(int, end_str.split(":"))
+                if start_hour <= 6:
+                    if time_range not in seen_race:
+                        seen_race.add(time_range)
+                        start_minutes = start_hour * 60 + start_min
+                        race_morning_data.append((day_label, time_range, start_minutes))
+                elif 7 <= start_hour <= 12:
                     start_minutes = start_hour * 60 + start_min
                     end_minutes = end_hour * 60 + end_min
                     duration = end_minutes - start_minutes
-                    if duration >= 240:
+                    if duration >= 240 and time_range not in seen_pre:
+                        seen_pre.add(time_range)
                         pre_race_data.append((day_label, time_range, start_hour, duration))
-    notes: list[str] = []
-    preferred_pre: tuple[str | None, str, int, int] | None = None
-    for item in pre_race_data:
-        label = (item[0] or "").lower()
-        if "saturday" in label or "friday" in label:
-            preferred_pre = item
-            break
-    if preferred_pre is None and pre_race_data:
-        preferred_pre = max(pre_race_data, key=lambda item: (item[0] is not None, item[2], item[3]))
-    if preferred_pre:
-        day_label, time_range, _, _ = preferred_pre
-        label_text = day_label or "Pre-race day"
-        notes.append(f"Transition 1 pre-race ({label_text}): {time_range}")
-    preferred_race: tuple[str | None, str, int] | None = None
-    for item in race_morning_data:
-        label = (item[0] or "").lower()
-        if "sunday" in label or "race" in label:
-            preferred_race = item
-            break
-    if preferred_race is None and race_morning_data:
-        preferred_race = min(race_morning_data, key=lambda item: item[2])
-    if preferred_race:
-        day_label, time_range, _ = preferred_race
-        label_text = day_label or "Race morning"
-        notes.append(f"Transition 1 race morning ({label_text}): {time_range}")
+        if not explicit_pre and pre_race_data:
+            preferred_pre = next((item for item in pre_race_data if item[0] and "saturday" in item[0].lower()), None)
+            if preferred_pre is None:
+                preferred_pre = max(pre_race_data, key=lambda item: (item[0] is not None, item[2], item[3]))
+            if preferred_pre:
+                day_label, time_range, _, _ = preferred_pre
+                explicit_pre = (day_label or "Pre-race day", time_range)
+        if not explicit_race and race_morning_data:
+            filtered = [item for item in race_morning_data if 4 <= int(item[1].split(":")[0]) <= 6]
+            preferred_race = next((item for item in filtered if item[0] and ("sunday" in item[0].lower() or "race" in item[0].lower())), None)
+            if preferred_race is None:
+                preferred_race = min(filtered or race_morning_data, key=lambda item: item[2])
+            if preferred_race:
+                day_label, time_range, _ = preferred_race
+                explicit_race = (day_label or "Race morning", time_range)
+
+    if explicit_pre:
+        day_phrase, time_range = explicit_pre
+        notes.append(f"Transition 1 pre-race ({day_phrase}): {time_range}")
+    if explicit_race:
+        day_phrase, time_range = explicit_race
+        notes.append(f"Transition 1 race morning ({day_phrase}): {time_range} (final checks only)")
     return notes
 
 
