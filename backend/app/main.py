@@ -66,6 +66,9 @@ TRIATHLON_KEYWORDS = [
     "relay",
 ]
 MIN_KEYWORD_MATCHES = 3
+RACK_TIME_PATTERN = re.compile(r"\b\d{1,2}:\d{2}\b")
+TIME_RANGE_PATTERN = re.compile(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}")
+DAY_PATTERN = re.compile(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+", re.IGNORECASE)
 
 
 class RateLimiter:
@@ -163,6 +166,104 @@ def _humanize(value: str) -> str:
     return cleaned.title()
 
 
+
+def _has_transition_schedule(text: str) -> bool:
+    lower = text.lower()
+    if not RACK_TIME_PATTERN.search(text):
+        return False
+    keywords = ("transition 1", "transition one", "t1", "bike check-in", "bike check in", "blue bag")
+    return any(keyword in lower for keyword in keywords)
+
+
+
+def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk]) -> List[Chunk]:
+    seen_ids = {chunk.id for chunk in selected}
+    if any(_has_transition_schedule(chunk.text) for chunk in selected):
+        return selected
+    for chunk in entry.chunks:
+        if chunk.id in seen_ids:
+            continue
+        if _has_transition_schedule(chunk.text):
+            selected.insert(0, chunk)
+            break
+    return selected
+
+
+
+def _extract_transition_schedule_notes(entry: DocumentEntry, selected: List[Chunk]) -> List[str]:
+    pre_race_data: list[tuple[str | None, str, int, int]] = []
+    race_morning_data: list[tuple[str | None, str, int]] = []
+    seen_pre: set[str] = set()
+    seen_race: set[str] = set()
+    for chunk in entry.chunks:
+        if "transition 1" not in chunk.text.lower():
+            continue
+        for day_label, time_range in _extract_transition_notes_from_text(chunk.text):
+            start_str, end_str = [part.strip() for part in time_range.split("-", 1)]
+            start_hour, start_min = map(int, start_str.split(":"))
+            end_hour, end_min = map(int, end_str.split(":"))
+            if start_hour <= 6:
+                if time_range not in seen_race:
+                    seen_race.add(time_range)
+                    start_minutes = start_hour * 60 + start_min
+                    race_morning_data.append((day_label, time_range, start_minutes))
+            elif 7 <= start_hour <= 12:
+                if time_range not in seen_pre:
+                    seen_pre.add(time_range)
+                    start_minutes = start_hour * 60 + start_min
+                    end_minutes = end_hour * 60 + end_min
+                    duration = end_minutes - start_minutes
+                    if duration >= 240:
+                        pre_race_data.append((day_label, time_range, start_hour, duration))
+    notes: list[str] = []
+    preferred_pre: tuple[str | None, str, int, int] | None = None
+    for item in pre_race_data:
+        label = (item[0] or "").lower()
+        if "saturday" in label or "friday" in label:
+            preferred_pre = item
+            break
+    if preferred_pre is None and pre_race_data:
+        preferred_pre = max(pre_race_data, key=lambda item: (item[0] is not None, item[2], item[3]))
+    if preferred_pre:
+        day_label, time_range, _, _ = preferred_pre
+        label_text = day_label or "Pre-race day"
+        notes.append(f"Transition 1 pre-race ({label_text}): {time_range}")
+    preferred_race: tuple[str | None, str, int] | None = None
+    for item in race_morning_data:
+        label = (item[0] or "").lower()
+        if "sunday" in label or "race" in label:
+            preferred_race = item
+            break
+    if preferred_race is None and race_morning_data:
+        preferred_race = min(race_morning_data, key=lambda item: item[2])
+    if preferred_race:
+        day_label, time_range, _ = preferred_race
+        label_text = day_label or "Race morning"
+        notes.append(f"Transition 1 race morning ({label_text}): {time_range}")
+    return notes
+
+
+def _extract_transition_notes_from_text(text: str) -> List[tuple[str | None, str]]:
+    results: list[tuple[str | None, str]] = []
+    day_matches = [(match.group().strip(), match.start()) for match in DAY_PATTERN.finditer(text)]
+    lowered = text.lower()
+    for match in re.finditer(r"transition 1", lowered):
+        idx = match.start()
+        nearest_day: str | None = None
+        for day_label, pos in day_matches:
+            if pos <= idx:
+                nearest_day = day_label
+            else:
+                break
+        if nearest_day is None and day_matches:
+            nearest_day = day_matches[0][0]
+        segment = text[idx:idx + 800]
+        time_ranges = TIME_RANGE_PATTERN.findall(segment)
+        for time_range in time_ranges:
+            results.append((nearest_day, time_range))
+    return results
+
+
 def _require_rate_limit(limiter: RateLimiter, request: Request, error_message: str) -> None:
     identifier = request.client.host if request.client else "anonymous"
     forwarded = request.headers.get("x-forwarded-for")
@@ -243,7 +344,10 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     query_embedding = embed_query(combined_query)
     settings = get_settings()
     top_chunks = entry.similarity_search(query_embedding, top_k=settings.top_k)
-    answer = answer_question(payload.question, payload.context, top_chunks)
+    top_chunks = _augment_with_schedule_chunks(entry, top_chunks)
+    helper_notes = _extract_transition_schedule_notes(entry, top_chunks)
+    helper_text = " | ".join(helper_notes) if helper_notes else None
+    answer = answer_question(payload.question, payload.context, helper_text, top_chunks)
     citations = [
         Citation(
             section=chunk.section,
