@@ -26,3 +26,9 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     citations: List[Citation]
+
+
+class ExampleGuide(BaseModel):
+    slug: str
+    name: str
+    filename: str
