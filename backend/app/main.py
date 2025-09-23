@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import time
@@ -24,6 +24,7 @@ from backend.app.services import document_registry
 from backend.app.services.document_registry import Chunk, DocumentEntry
 from backend.app.services.embedding import embed_chunks, embed_query
 from backend.app.services.pdf_loader import PageChunk, load_pdf_chunks
+from backend.app.services.schedule_extractor import extract_schedule
 from backend.app.services.qa import answer_question
 
 load_dotenv(override=True)
@@ -107,6 +108,7 @@ def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
             "The uploaded PDF does not appear to describe a triathlon athlete guide."
         )
 
+    schedule_sections = extract_schedule(file_bytes, chunks)
     embeddings = embed_chunks([chunk.text for chunk in chunks])
     registry = document_registry.get_registry()
     document_id = str(uuid.uuid4())
@@ -115,6 +117,7 @@ def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
         filename=filename,
         page_count=page_count,
         uploaded_at=datetime.utcnow(),
+        schedule=schedule_sections,
     )
     for chunk, vector in zip(chunks, embeddings, strict=False):
         entry.chunks.append(
@@ -129,11 +132,23 @@ def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
         )
     registry.add(entry)
 
+    schedule_payload = [
+        {
+            "title": section.title,
+            "items": [
+                {"time": item.time, "activity": item.activity}
+                for item in section.items
+            ],
+        }
+        for section in schedule_sections
+    ]
+
     return UploadResponse(
         document_id=document_id,
         filename=filename,
         page_count=page_count,
         uploaded_at=entry.uploaded_at,
+        schedule=schedule_payload,
     )
 
 

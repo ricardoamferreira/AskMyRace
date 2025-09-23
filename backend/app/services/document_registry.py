@@ -18,12 +18,25 @@ class Chunk:
 
 
 @dataclass
+class ScheduleItem:
+    time: str
+    activity: str
+
+
+@dataclass
+class ScheduleDay:
+    title: str
+    items: List[ScheduleItem] = field(default_factory=list)
+
+
+@dataclass
 class DocumentEntry:
     id: str
     filename: str
     page_count: int
     uploaded_at: datetime
     chunks: List[Chunk] = field(default_factory=list)
+    schedule: List[ScheduleDay] = field(default_factory=list)
 
     def similarity_search(self, query_embedding: np.ndarray, top_k: int) -> List[Chunk]:
         if not self.chunks:

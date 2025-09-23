@@ -18,6 +18,7 @@ import {
   loadExample,
   uploadGuide,
   UploadResponse,
+  ScheduleDay,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -29,6 +30,7 @@ import {
   Sparkles,
   UploadCloud,
   UserRound,
+  CalendarRange,
 } from "lucide-react";
 
 interface Message {
@@ -343,6 +345,8 @@ export default function Home() {
   };
 
   const formattedUploadTime = document ? new Date(document.uploaded_at).toLocaleString() : null;
+  const scheduleDays = document?.schedule ?? [];
+  const isGuideLoaded = Boolean(document);
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden">
@@ -382,7 +386,12 @@ export default function Home() {
         </header>
 
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 pt-8">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-6",
+              "xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)_minmax(0,320px)]",
+            )}
+          >
             <aside className="flex flex-col gap-6">
               <section className="glass-panel p-6">
                 <div className="flex items-center justify-between gap-3">
@@ -636,9 +645,62 @@ export default function Home() {
                 </fieldset>
               </form>
             </section>
+            <SchedulePanel schedule={scheduleDays} isGuideLoaded={isGuideLoaded} />
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function SchedulePanel({ schedule, isGuideLoaded }: { schedule: ScheduleDay[]; isGuideLoaded: boolean }) {
+  const hasSchedule = schedule.length > 0;
+
+  return (
+    <section className="glass-panel order-last flex max-h-[640px] flex-col overflow-hidden border-white/10 xl:order-none">
+      <div className="border-b border-white/10 px-5 py-4">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Event schedule</p>
+        <h2 className="text-base font-semibold text-white">Race timeline</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {hasSchedule ? (
+          <div className="flex flex-col gap-4">
+            {schedule.map((day) => (
+              <article
+                key={day.title}
+                className="rounded-xl border border-white/10 bg-black/25 p-4 text-sm text-slate-200"
+              >
+                <h3 className="text-sm font-semibold text-white">{day.title}</h3>
+                <dl className="mt-3 space-y-2">
+                  {day.items.map((item, index) => (
+                    <div
+                      key={`${day.title}-${item.time}-${index}`}
+                      className="flex items-start gap-3 text-xs leading-5 text-slate-200/90"
+                    >
+                      <dt className="w-24 shrink-0 font-semibold text-indigo-200">{item.time}</dt>
+                      <dd className="flex-1 text-slate-200/80">{item.activity}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-slate-400">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300">
+              <CalendarRange className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="font-medium text-slate-200">No schedule yet</p>
+              <p className="text-xs text-slate-500">
+                {isGuideLoaded
+                  ? "We couldn't find a timetable in this guide."
+                  : "Load an athlete guide to preview its timetable here."}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

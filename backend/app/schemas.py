@@ -6,11 +6,22 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class ScheduleItem(BaseModel):
+    time: str
+    activity: str
+
+
+class ScheduleDay(BaseModel):
+    title: str
+    items: List[ScheduleItem]
+
+
 class UploadResponse(BaseModel):
     document_id: str
     filename: str
     page_count: int
     uploaded_at: datetime
+    schedule: List[ScheduleDay] = Field(default_factory=list)
 
 
 class Citation(BaseModel):
