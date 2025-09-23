@@ -428,7 +428,13 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
     top_chunks = _augment_with_schedule_chunks(entry, top_chunks, payload.question)
     helper_notes = _extract_transition_schedule_notes(entry, payload.question, top_chunks)
     helper_text = " | ".join(helper_notes) if helper_notes else None
-    answer = answer_question(payload.question, payload.context, helper_text, top_chunks)
+    answer = answer_question(
+        payload.question,
+        payload.context,
+        helper_text,
+        top_chunks,
+        entry.schedule,
+    )
     citations = [
         Citation(
             section=chunk.section,

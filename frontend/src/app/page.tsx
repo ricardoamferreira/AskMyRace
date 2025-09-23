@@ -356,7 +356,7 @@ export default function Home() {
       </div>
 
       <div className="relative z-10 flex flex-1 flex-col pb-12">
-        <header className="mx-auto w-full max-w-6xl px-6 pt-12">
+        <header className="mx-auto w-full max-w-screen-2xl px-6 pt-12">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-col gap-4">
               <div className="inline-flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.4em] text-slate-300">
@@ -385,11 +385,12 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 pt-8">
+        <main className="mx-auto flex w-full max-w-screen-2xl flex-1 flex-col gap-6 px-6 pt-8">
           <div
             className={cn(
               "grid grid-cols-1 gap-6",
               "xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)_minmax(0,320px)]",
+              "2xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)_minmax(0,360px)]",
             )}
           >
             <aside className="flex flex-col gap-6">
