@@ -1,8 +1,12 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #050509;
+  --foreground: #f5f7ff;
+  --panel: rgba(15, 16, 26, 0.78);
+  --panel-border: rgba(120, 128, 158, 0.25);
+  --panel-highlight: rgba(99, 102, 241, 0.18);
+  --panel-shadow: 0 32px 70px -45px rgba(15, 16, 26, 0.9);
 }
 
 @theme inline {
@@ -12,15 +16,91 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 body {
-  background: var(--background);
+  margin: 0;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  background-color: var(--background);
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(99, 102, 241, 0.25), transparent 55%),
+    radial-gradient(circle at 82% 16%, rgba(6, 182, 212, 0.18), transparent 50%),
+    radial-gradient(circle at 20% 82%, rgba(236, 72, 153, 0.18), transparent 55%),
+    linear-gradient(180deg, #050509 0%, #090b1d 45%, #050509 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(120deg, rgba(99, 102, 241, 0.06), transparent 40%),
+    linear-gradient(240deg, rgba(94, 234, 212, 0.04), transparent 50%);
+}
+
+::selection {
+  background-color: rgba(99, 102, 241, 0.45);
+  color: #f8fafc;
+}
+
+.glass-panel {
+  background: rgba(10, 11, 22, 0.82);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+  border-radius: 1.25rem;
+}
+
+.glass-panel--subtle {
+  background: rgba(11, 12, 24, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.glow-border {
+  position: relative;
+}
+
+.glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.35), rgba(14, 165, 233, 0.2), rgba(236, 72, 153, 0.2));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 0;
+}
+
+.glow-border:hover::before,
+.glow-border:focus-visible::before {
+  opacity: 1;
+}
+
+.glow-border > * {
+  position: relative;
+  z-index: 1;
 }
