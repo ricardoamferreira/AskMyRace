@@ -1,6 +1,14 @@
-﻿"use client";
+"use client";
 
-import { FormEvent, useMemo, useRef, useState, KeyboardEvent } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
@@ -18,6 +26,7 @@ import {
   FileText,
   Loader2,
   SendHorizontal,
+  Sparkles,
   UploadCloud,
   UserRound,
 } from "lucide-react";
@@ -80,9 +89,51 @@ function buildHistory(messages: Message[], question: string): string | undefined
     .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
     .join("\n");
   if (!recent) return undefined;
-  return recent.length > MAX_HISTORY_LENGTH
-    ? recent.slice(recent.length - MAX_HISTORY_LENGTH)
-    : recent;
+  return recent.length > MAX_HISTORY_LENGTH ? recent.slice(recent.length - MAX_HISTORY_LENGTH) : recent;
+}
+
+function MessageBubble({ message }: { message: Message }) {
+  const isUser = message.role === "user";
+
+  return (
+    <article
+      className={cn(
+        "relative flex gap-3 rounded-2xl border px-4 py-4 text-sm shadow-[0_16px_45px_rgba(8,10,25,0.45)] transition-colors duration-300",
+        isUser ? "border-sky-500/30 bg-sky-500/10" : "border-white/10 bg-white/5",
+      )}
+    >
+      <div
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10",
+          isUser ? "bg-sky-500/20 text-sky-100" : "bg-white/10 text-indigo-100",
+        )}
+      >
+        {isUser ? <UserRound className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+      </div>
+      <div className="flex flex-1 flex-col gap-3 text-slate-100">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
+          <span>{isUser ? "You" : "Ask My Race"}</span>
+          <span className="hidden text-slate-600 md:inline">|</span>
+          <span className="hidden md:inline text-slate-500">{isUser ? "Question" : "Answer"}</span>
+        </div>
+        <p className="whitespace-pre-line leading-6 text-slate-100/90">{message.content}</p>
+        {message.citations && message.citations.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {message.citations.map((citation) => (
+              <span
+                key={`${citation.section}-${citation.page}`}
+                title={citation.excerpt}
+                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-slate-200/90 transition hover:border-white/30 hover:bg-white/15"
+              >
+                <FileText className="h-3.5 w-3.5 text-indigo-200" />
+                {citation.section} - p.{citation.page}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </article>
+  );
 }
 
 export default function Home() {
@@ -91,6 +142,15 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!messageListRef.current) return;
+    messageListRef.current.scrollTo({
+      top: messageListRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages]);
 
   const examplesQuery = useQuery({
     queryKey: ["examples"],
@@ -106,8 +166,7 @@ export default function Home() {
       toast.success("Athlete guide uploaded.");
     },
     onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : "Unable to upload the PDF.";
+      const message = error instanceof Error ? error.message : "Unable to upload the PDF.";
       toast.error(message);
     },
   });
@@ -118,13 +177,10 @@ export default function Home() {
       setDocument(data);
       setMessages([]);
       const guideName = examplesQuery.data?.find((item) => item.slug === slug)?.name;
-      toast.success(
-        guideName ? `Loaded demo guide: ${guideName}` : "Demo guide loaded.",
-      );
+      toast.success(guideName ? `Loaded demo guide: ${guideName}` : "Demo guide loaded.");
     },
     onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : "Unable to load the demo guide.";
+      const message = error instanceof Error ? error.message : "Unable to load the demo guide.";
       toast.error(message);
     },
   });
@@ -140,8 +196,7 @@ export default function Home() {
       history?: string;
     }) => askQuestion(documentId, query, history),
     onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : "Unable to generate an answer.";
+      const message = error instanceof Error ? error.message : "Unable to generate an answer.";
       toast.error(message);
     },
   });
@@ -151,21 +206,32 @@ export default function Home() {
     [document, uploadMutation.isPending, exampleMutation.isPending],
   );
 
-  const handleFileInput = (fileList: FileList | null) => {
-    const file = fileList?.[0];
+  const assistantAnswers = useMemo(
+    () => messages.filter((message) => message.role === "assistant").length,
+    [messages],
+  );
+
+  const isWorkspaceBusy = uploadMutation.isPending || exampleMutation.isPending;
+  const isSending = askMutation.isPending;
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
 
     if (file.type !== "application/pdf") {
       toast.error("Please upload a PDF athlete guide.");
+      event.target.value = "";
       return;
     }
 
     if (file.size > 80 * 1024 * 1024) {
       toast.error("PDF must be 80 MB or smaller.");
+      event.target.value = "";
       return;
     }
 
     uploadMutation.mutate(file);
+    event.target.value = "";
   };
 
   const handleAsk = () => {
@@ -189,7 +255,7 @@ export default function Home() {
       return;
     }
 
-    if (!isReadyToAsk || askMutation.isPending) {
+    if (!isReadyToAsk || isSending) {
       return;
     }
 
@@ -236,7 +302,7 @@ export default function Home() {
 
   const handleSampleQuestion = (value: string) => {
     if (!document) {
-      toast("Upload or load a guide first to try a sample question.", { icon: "💡" });
+      toast("Upload or load a guide first to try a sample question.", { icon: "??" });
       return;
     }
     setQuestion(value);
@@ -256,243 +322,322 @@ export default function Home() {
     }
   };
 
+  const handleResetConversation = () => {
+    if (messages.length === 0) {
+      return;
+    }
+    setMessages([]);
+    toast.success("Conversation cleared.");
+  };
+
+  const handleResetWorkspace = () => {
+    if (isWorkspaceBusy) {
+      return;
+    }
+    if (!document && messages.length === 0) {
+      return;
+    }
+    setMessages([]);
+    setDocument(null);
+    toast.success("Workspace cleared.");
+  };
+
+  const formattedUploadTime = document ? new Date(document.uploaded_at).toLocaleString() : null;
+
   return (
-    <div className="min-h-screen bg-zinc-100">
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-6 lg:px-8">
-        <header className="flex flex-col gap-2 border-b border-zinc-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold text-zinc-900">Ask My Race</h1>
-            <p className="text-sm text-zinc-600">
-              Upload a triathlon athlete guide and ask follow-up questions with context-aware answers.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-zinc-500">
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              Backend connected
-            </span>
-            <span className="hidden sm:inline">•</span>
-            <span className="hidden sm:inline text-zinc-500">Powered by LangChain · OpenAI</span>
+    <div className="relative flex min-h-screen flex-col overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(148,163,255,0.15),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(236,72,153,0.12),_transparent_60%)]" />
+        <div className="absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-white/20 via-transparent to-transparent blur-3xl" />
+      </div>
+
+      <div className="relative z-10 flex flex-1 flex-col pb-12">
+        <header className="mx-auto w-full max-w-6xl px-6 pt-12">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-4">
+              <div className="inline-flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.4em] text-slate-300">
+                <Sparkles className="h-3.5 w-3.5 text-indigo-300" />
+                Ask My Race
+              </div>
+              <h1 className="text-3xl font-semibold leading-tight text-white sm:text-4xl">
+                Race-day clarity at AI speed
+              </h1>
+              <p className="max-w-2xl text-sm text-slate-400 sm:text-base">
+                Upload your athlete guide and chat with a modern assistant that remembers the conversation, cites its answers, and keeps you ready for every checkpoint.
+              </p>
+            </div>
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition",
+                  document ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "border-white/10 bg-white/5 text-slate-300",
+                )}
+              >
+                <CheckCircle2 className={cn("h-4 w-4", document ? "text-emerald-300" : "text-slate-400")} />
+                {document ? "Guide synced" : "Waiting for guide"}
+              </span>
+              <span className="text-xs text-slate-500">LangChain + OpenAI</span>
+            </div>
           </div>
         </header>
 
-        <div className="grid flex-1 gap-6 lg:grid-cols-[320px_1fr]">
-          <aside className="flex flex-col gap-6">
-            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-lg font-medium text-zinc-900">Upload athlete guide</h2>
-              <p className="mb-4 text-sm text-zinc-600">
-                Drag and drop a PDF or choose a file. We only store it for this session.
-              </p>
-              <label
-                className={cn(
-                  "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center transition",
-                  (uploadMutation.isPending || exampleMutation.isPending) && "opacity-60",
-                  "hover:border-zinc-400 hover:bg-zinc-100",
-                )}
-              >
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  onChange={(event) => handleFileInput(event.target.files)}
-                  disabled={uploadMutation.isPending || exampleMutation.isPending}
-                />
-                {uploadMutation.isPending ? (
-                  <Loader2 className="h-7 w-7 animate-spin text-zinc-500" />
-                ) : (
-                  <UploadCloud className="mb-3 h-7 w-7 text-zinc-500" />
-                )}
-                <div className="text-sm font-medium text-zinc-800">
-                  {uploadMutation.isPending
-                    ? "Uploading guide..."
-                    : "Click to browse or drop a PDF"}
-                </div>
-                <p className="text-xs text-zinc-500">PDF up to 80 MB</p>
-              </label>
-              {document && (
-                <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
-                  <div className="flex items-center gap-2 font-medium">
-                    <FileText className="h-4 w-4" />
-                    {document.filename}
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 pt-8">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+            <aside className="flex flex-col gap-6">
+              <section className="glass-panel p-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Workspace</p>
+                    <h2 className="text-lg font-semibold text-white">Athlete guide</h2>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-3 text-xs text-emerald-800">
-                    <span>Pages: {document.page_count}</span>
-                    <span>
-                      Uploaded: {new Date(document.uploaded_at).toLocaleString()}
+                  {document && (
+                    <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">
+                      {document.page_count} pages
                     </span>
-                  </div>
+                  )}
                 </div>
-              )}
-            </section>
 
-            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-lg font-medium text-zinc-900">Demo guides</h2>
-              <div className="flex flex-col gap-2">
-                {examplesQuery.isLoading && (
-                  <div className="flex items-center gap-2 text-sm text-zinc-500">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading demos...
-                  </div>
-                )}
-                {!examplesQuery.isLoading && examplesQuery.data?.length === 0 && (
-                  <p className="text-sm text-zinc-500">No demo guides available yet.</p>
-                )}
-                {examplesQuery.data?.map((example) => (
-                  <button
-                    key={example.slug}
-                    type="button"
-                    onClick={() => handleSelectExample(example.slug)}
-                    disabled={exampleMutation.isPending}
+                <div className="mt-5">
+                  <input
+                    id="guide-upload"
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={handleFileChange}
+                    disabled={isWorkspaceBusy}
+                  />
+                  <label
+                    htmlFor="guide-upload"
                     className={cn(
-                      "rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50",
-                      exampleMutation.isPending && "opacity-60",
+                      "glow-border block rounded-2xl border border-white/10 bg-white/5 px-6 py-9 text-center transition",
+                      isWorkspaceBusy && "cursor-not-allowed opacity-60",
+                      !isWorkspaceBusy && "cursor-pointer hover:border-white/20 hover:bg-white/10",
                     )}
                   >
-                    {example.name}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-4 text-xs text-zinc-500">
-                Load a hosted guide instantly for demos or quick testing.
-              </p>
-            </section>
-
-            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-lg font-medium text-zinc-900">Quick prompts</h2>
-              <div className="flex flex-col gap-2">
-                {sampleQuestions.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => handleSampleQuestion(item)}
-                    className="rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-4 text-xs text-zinc-500">
-                These are great starters once a guide is loaded.
-              </p>
-            </section>
-
-            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-lg font-medium text-zinc-900">How it works</h2>
-              <ol className="space-y-2 text-sm text-zinc-600">
-                <li>
-                  <span className="font-medium text-zinc-800">1.</span> Upload or select a race guide PDF.
-                </li>
-                <li>
-                  <span className="font-medium text-zinc-800">2.</span> We chunk & embed it with LangChain.
-                </li>
-                <li>
-                  <span className="font-medium text-zinc-800">3.</span> Ask questions; answers cite the guide.
-                </li>
-              </ol>
-            </section>
-          </aside>
-
-          <main className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white shadow-sm">
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              {messages.length > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                  Please note that this is a work in progress; answers may contain errors.
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-indigo-200">
+                      {uploadMutation.isPending ? (
+                        <Loader2 className="h-6 w-6 animate-spin" />
+                      ) : (
+                        <UploadCloud className="h-6 w-6" />
+                      )}
+                    </div>
+                    <div className="mt-4 text-sm font-medium text-white">
+                      {uploadMutation.isPending ? "Uploading guide..." : "Click to browse or drop a PDF"}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">PDF up to 80 MB</p>
+                  </label>
                 </div>
-              )}
-              {messages.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-zinc-500">
-                  <Bot className="h-10 w-10 text-zinc-400" />
-                  <div className="max-w-md text-sm">
-                    Ask about logistics, schedules, rules, or anything specific to your loaded guide. Citations point to exactly where the answer comes from.
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  {messages.map((message) => (
-                    <article
-                      key={message.id}
+
+                {document ? (
+                  <div className="mt-5 space-y-3 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm text-slate-200">
+                    <div className="flex items-center gap-2 break-all">
+                      <FileText className="h-4 w-4 text-indigo-200" />
+                      <span>{document.filename}</span>
+                    </div>
+                    {formattedUploadTime && (
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>Uploaded</span>
+                        <span>{formattedUploadTime}</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleResetWorkspace}
+                      disabled={isWorkspaceBusy}
                       className={cn(
-                        "flex gap-3 rounded-2xl border px-4 py-3 text-sm",
-                        message.role === "user"
-                          ? "border-blue-100 bg-blue-50"
-                          : "border-zinc-200 bg-white",
+                        "text-xs text-slate-400 transition",
+                        isWorkspaceBusy ? "cursor-not-allowed opacity-50" : "hover:text-white",
                       )}
                     >
-                      <div className={cn(
-                        "mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                        message.role === "user"
-                          ? "bg-blue-500 text-white"
-                          : "bg-zinc-900 text-white",
-                      )}>
-                        {message.role === "user" ? (
-                          <UserRound className="h-4 w-4" />
-                        ) : (
-                          <Bot className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-3">
-                        <p className="whitespace-pre-line text-zinc-800">
-                          {message.content}
-                        </p>
-                        {message.citations && message.citations.length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {message.citations.map((citation) => (
-                              <span
-                                key={`${citation.section}-${citation.page}`}
-                                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600" title={citation.excerpt}
-                              >
-                                {citation.section} — p.{citation.page}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </article>
+                      Clear workspace
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-5 text-xs text-slate-500">
+                    Bring your athlete guide into the workspace to unlock the chat experience and instant citations.
+                  </p>
+                )}
+              </section>
+
+              <section className="glass-panel glass-panel--subtle p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Quick start</p>
+                    <h2 className="text-base font-semibold text-white">Demo guides</h2>
+                  </div>
+                  {exampleMutation.isPending && (
+                    <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                  )}
+                </div>
+                <div className="mt-4 space-y-2">
+                  {examplesQuery.isLoading && (
+                    <p className="text-sm text-slate-400">Fetching demo guides...</p>
+                  )}
+                  {!examplesQuery.isLoading && examplesQuery.data?.length === 0 && (
+                    <p className="text-sm text-slate-400">No demo guides available yet.</p>
+                  )}
+                  {examplesQuery.data?.map((example) => (
+                    <button
+                      key={example.slug}
+                      type="button"
+                      onClick={() => handleSelectExample(example.slug)}
+                      disabled={exampleMutation.isPending}
+                      className={cn(
+                        "glow-border flex w-full flex-col rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-slate-200 transition",
+                        exampleMutation.isPending && "cursor-not-allowed opacity-60",
+                        !exampleMutation.isPending && "hover:border-white/20 hover:bg-white/10",
+                      )}
+                    >
+                      <span className="font-medium text-white">{example.name}</span>
+                      <span className="text-xs text-slate-400">{example.filename}</span>
+                    </button>
                   ))}
                 </div>
-              )}
-            </div>
+              </section>
 
-            <form ref={formRef} onSubmit={handleSubmit} className="border-t border-zinc-200 px-6 py-4">
-              <fieldset className="flex flex-col gap-3" disabled={askMutation.isPending}>
-                <textarea
-                  ref={textareaRef}
-                  value={question}
-                  onChange={(event) => handleQuestionChange(event.target.value)}
-                  onKeyDown={handleTextareaKeyDown}
-                  placeholder={document ? "Ask a question about the guide" : "Upload or load a guide to start asking questions"}
-                  maxLength={MAX_QUESTION_LENGTH}
-                  className="min-h-[100px] resize-none rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-800 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-indigo-100"
-                />
-                <div className="flex items-center justify-between text-xs text-zinc-500">
-                  <span>{document ? document.filename : "No guide loaded yet"}</span>
-                  <span>
-                    {messages.filter((msg) => msg.role === "assistant").length} answers · {question.length}/
-                    {MAX_QUESTION_LENGTH}
-                  </span>
+              <section className="glass-panel glass-panel--subtle p-6">
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Need ideas?</p>
+                    <h2 className="text-base font-semibold text-white">Sample prompts</h2>
+                    <p className="mt-1 text-xs text-slate-400">Tap to drop a question into the chat.</p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {sampleQuestions.map((sample) => (
+                      <button
+                        key={sample}
+                        type="button"
+                        onClick={() => handleSampleQuestion(sample)}
+                        className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-slate-200 transition hover:border-white/30 hover:bg-white/10"
+                      >
+                        {sample}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4 text-xs text-slate-400">
+                    <p className="text-slate-300">How it works</p>
+                    <ul className="mt-3 space-y-2">
+                      <li className="flex gap-2">
+                        <span className="text-slate-500">1</span>
+                        <span>Upload or pick a race guide PDF.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="text-slate-500">2</span>
+                        <span>We embed it with LangChain so the assistant can cite answers.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="text-slate-500">3</span>
+                        <span>Ask anything and follow up without losing context.</span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
-                <div className="flex items-center justify-end">
-                  <button
-                    type="submit"
-                    disabled={!isReadyToAsk || askMutation.isPending || !question.trim()}
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition",
-                      (!isReadyToAsk || askMutation.isPending || !question.trim())
-                        ? "opacity-60"
-                        : "hover:bg-zinc-800",
-                    )}
-                  >
-                    {askMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <SendHorizontal className="h-4 w-4" />
-                    )}
-                    Ask
-                  </button>
+              </section>
+            </aside>
+
+            <section className="glass-panel flex min-h-[640px] flex-col overflow-hidden border-white/10">
+              <div className="flex items-start justify-between border-b border-white/10 px-6 py-5">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Conversation</p>
+                  <h2 className="text-xl font-semibold text-white">Ask with citations</h2>
+                  <p className="mt-1 text-xs text-slate-400">The assistant remembers up to six turns when it helps.</p>
                 </div>
-              </fieldset>
-            </form>
-          </main>
-        </div>
+                <button
+                  type="button"
+                  onClick={handleResetConversation}
+                  disabled={messages.length === 0 || isSending}
+                  className={cn(
+                    "rounded-full border border-white/10 px-3 py-1 text-xs text-slate-400 transition",
+                    messages.length === 0 || isSending
+                      ? "cursor-not-allowed opacity-40"
+                      : "hover:border-white/25 hover:text-white",
+                  )}
+                >
+                  Clear chat
+                </button>
+              </div>
+
+              <div ref={messageListRef} className="flex-1 overflow-y-auto px-6 pb-10 pt-6">
+                {messages.length > 0 && (
+                  <div className="mb-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                    Still in beta. Verify critical logistics with the official guide.
+                  </div>
+                )}
+
+                {messages.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-slate-400">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5 text-indigo-200">
+                      <Bot className="h-8 w-8" />
+                    </div>
+                    <div className="max-w-md text-sm leading-6 text-slate-300">
+                      Load a guide to ask about logistics, schedules, rules, or anything specific to race day. Answers include inline citations so you can trust every detail.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    {messages.map((message) => (
+                      <MessageBubble key={message.id} message={message} />
+                    ))}
+                    {isSending && (
+                      <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generating answer...
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <form ref={formRef} onSubmit={handleSubmit} className="border-t border-white/10 bg-black/30 px-6 py-5">
+                <fieldset className="flex flex-col gap-4" disabled={isSending}>
+                  <div className="rounded-2xl border border-white/10 bg-black/40 px-4 py-3 shadow-inner">
+                    <textarea
+                      ref={textareaRef}
+                      value={question}
+                      onChange={(event) => handleQuestionChange(event.target.value)}
+                      onKeyDown={handleTextareaKeyDown}
+                      placeholder={document ? "Ask a question about the guide" : "Upload or load a guide to start asking questions"}
+                      maxLength={MAX_QUESTION_LENGTH}
+                      className="h-28 w-full resize-none bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+                    />
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <span className="truncate text-slate-400">
+                        {document ? document.filename : "No guide loaded"}
+                      </span>
+                      <span>
+                        {assistantAnswers} answers - {question.length}/{MAX_QUESTION_LENGTH}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setQuestion("")}
+                      className="rounded-full border border-white/10 px-4 py-2 text-xs text-slate-400 transition hover:border-white/25 hover:text-white"
+                    >
+                      Clear draft
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!isReadyToAsk || isSending || !question.trim()}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full bg-white/90 px-5 py-2 text-sm font-medium text-slate-900 transition",
+                        (!isReadyToAsk || isSending || !question.trim())
+                          ? "cursor-not-allowed opacity-60"
+                          : "hover:bg-white",
+                      )}
+                    >
+                      {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
+                      Ask
+                    </button>
+                  </div>
+                </fieldset>
+              </form>
+            </section>
+          </div>
+        </main>
       </div>
     </div>
   );
