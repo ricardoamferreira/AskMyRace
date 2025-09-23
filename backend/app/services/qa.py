@@ -1,12 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 
 from backend.app.config import get_settings
-from backend.app.services.document_registry import Chunk
+from backend.app.services.document_registry import Chunk, ScheduleDay
 
 SYSTEM_PROMPT = (
     "You are a concise triathlon race assistant. Answer questions using only the provided context. "
@@ -36,15 +36,20 @@ def answer_question(
     followup: Optional[str],
     helper: Optional[str],
     top_chunks: List[Chunk],
+    schedule: Optional[Sequence[ScheduleDay]] = None,
 ) -> str:
-    if not top_chunks:
-        return "I couldn't find that in the athlete guide."
-
-    context_blocks = []
+    context_blocks: List[str] = []
     for chunk in top_chunks:
         context_blocks.append(
             f"Section: {chunk.section}\nPage: {chunk.page}\nExcerpt: {chunk.text}"
         )
+    schedule_block = _build_schedule_context(schedule)
+    if schedule_block:
+        context_blocks.append(schedule_block)
+
+    if not context_blocks:
+        return "I couldn't find that in the athlete guide."
+
     context_text = "\n---\n".join(context_blocks)
 
     settings = get_settings()
@@ -63,3 +68,22 @@ def answer_question(
         }
     )
     return response.content
+
+
+def _build_schedule_context(schedule: Optional[Sequence[ScheduleDay]]) -> str | None:
+    if not schedule:
+        return None
+
+    lines: List[str] = []
+    for day in schedule:
+        if not day.items:
+            continue
+        lines.append(day.title)
+        for item in day.items:
+            lines.append(f"- {item.time}: {item.activity}")
+        lines.append("")
+
+    formatted = "\n".join(lines).strip()
+    if not formatted:
+        return None
+    return f"Section: Extracted Schedule\nPage: 0\nExcerpt:\n{formatted}"
