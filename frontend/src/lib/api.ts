@@ -1,15 +1,28 @@
-﻿const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+/**
+ * Base URL for backend API requests.
+ */
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+/**
+ * Normalized schedule entry returned by the backend.
+ */
 export interface ScheduleItem {
   time: string;
   activity: string;
+  location?: string | null;
 }
 
+/**
+ * Groups schedule items by their day heading.
+ */
 export interface ScheduleDay {
   title: string;
   items: ScheduleItem[];
 }
 
+/**
+ * Response returned when a PDF is ingested successfully.
+ */
 export interface UploadResponse {
   document_id: string;
   filename: string;
@@ -18,23 +31,35 @@ export interface UploadResponse {
   schedule: ScheduleDay[];
 }
 
+/**
+ * Citation pointing back to a supporting chunk.
+ */
 export interface Citation {
   section: string;
   page: number;
   excerpt: string;
 }
 
+/**
+ * Answer payload produced by the question endpoint.
+ */
 export interface AskResponse {
   answer: string;
   citations: Citation[];
 }
 
+/**
+ * Lightweight metadata for demo guides stored on disk.
+ */
 export interface ExampleGuide {
   slug: string;
   name: string;
   filename: string;
 }
 
+/**
+ * Upload an athlete guide and receive its registry metadata.
+ */
 export async function uploadGuide(file: File): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -52,6 +77,9 @@ export async function uploadGuide(file: File): Promise<UploadResponse> {
   return (await response.json()) as UploadResponse;
 }
 
+/**
+ * Ask a question about the current document, optionally seeding prior context.
+ */
 export async function askQuestion(
   documentId: string,
   question: string,
@@ -79,6 +107,9 @@ export async function askQuestion(
   return (await response.json()) as AskResponse;
 }
 
+/**
+ * Fetch the list of bundled demo guides from the backend.
+ */
 export async function listExamples(): Promise<ExampleGuide[]> {
   const response = await fetch(`${API_BASE_URL}/examples`);
   if (!response.ok) {
@@ -88,6 +119,9 @@ export async function listExamples(): Promise<ExampleGuide[]> {
   return (await response.json()) as ExampleGuide[];
 }
 
+/**
+ * Request the backend to load a demo guide and return it as an upload response.
+ */
 export async function loadExample(slug: string): Promise<UploadResponse> {
   const response = await fetch(`${API_BASE_URL}/examples/${slug}`, {
     method: "POST",
@@ -99,6 +133,9 @@ export async function loadExample(slug: string): Promise<UploadResponse> {
   return (await response.json()) as UploadResponse;
 }
 
+/**
+ * Attempt to extract a human-readable error message from a failed fetch response.
+ */
 async function extractErrorMessage(response: Response): Promise<string | null> {
   try {
     const data = await response.json();

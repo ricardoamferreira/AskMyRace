@@ -1,3 +1,5 @@
+"""Utilities for splitting athlete guide PDFs into contextual chunks."""
+
 from __future__ import annotations
 
 import io
@@ -12,6 +14,7 @@ from pypdf import PdfReader
 
 @dataclass
 class PageChunk:
+    """Represents one chunk of text tied to a source page and section."""
     id: str
     text: str
     page: int
@@ -20,6 +23,7 @@ class PageChunk:
 
 
 def load_pdf_chunks(file_bytes: bytes) -> Tuple[List[PageChunk], int]:
+    """Extract text from a PDF, split it into overlapping chunks, and return them with page count."""
     reader = PdfReader(io.BytesIO(file_bytes))
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
@@ -47,6 +51,7 @@ def load_pdf_chunks(file_bytes: bytes) -> Tuple[List[PageChunk], int]:
 
 
 def infer_section_title(page_text: str) -> str:
+    """Guess a section heading for a page by looking at prominent early lines."""
     lines: List[str] = [line.strip() for line in page_text.splitlines() if line.strip()]
     if not lines:
         return "Unknown Section"
@@ -58,5 +63,6 @@ def infer_section_title(page_text: str) -> str:
 
 
 def normalize_title(title: str) -> str:
+    """Collapse whitespace and title-case a heading-like string."""
     cleaned = re.sub(r"\s+", " ", title).strip()
     return cleaned.title()

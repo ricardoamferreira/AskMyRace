@@ -23,14 +23,16 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Bot,
+  CalendarRange,
   CheckCircle2,
   FileText,
   Loader2,
+  MapPin,
+  Navigation,
   SendHorizontal,
   Sparkles,
   UploadCloud,
   UserRound,
-  CalendarRange,
 } from "lucide-react";
 
 interface Message {
@@ -345,7 +347,8 @@ export default function Home() {
   };
 
   const formattedUploadTime = document ? new Date(document.uploaded_at).toLocaleString() : null;
-  const scheduleDays = document?.schedule ?? [];
+  const scheduleDays = useMemo<ScheduleDay[]>(() => document?.schedule ?? [], [document]);
+  const locations = useMemo(() => deriveLocations(scheduleDays), [scheduleDays]);
   const isGuideLoaded = Boolean(document);
 
   return (
@@ -646,7 +649,10 @@ export default function Home() {
                 </fieldset>
               </form>
             </section>
-            <SchedulePanel schedule={scheduleDays} isGuideLoaded={isGuideLoaded} />
+            <div className="order-last flex flex-col gap-6 xl:order-none">
+              <SchedulePanel schedule={scheduleDays} isGuideLoaded={isGuideLoaded} />
+              <LocationsPanel locations={locations} isGuideLoaded={isGuideLoaded} />
+            </div>
           </div>
         </main>
       </div>
@@ -658,7 +664,7 @@ function SchedulePanel({ schedule, isGuideLoaded }: { schedule: ScheduleDay[]; i
   const hasSchedule = schedule.length > 0;
 
   return (
-    <section className="glass-panel order-last flex max-h-[640px] flex-col overflow-hidden border-white/10 xl:order-none">
+    <section className="glass-panel flex max-h-[640px] flex-col overflow-hidden border-white/10">
       <div className="border-b border-white/10 px-5 py-4">
         <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Event schedule</p>
         <h2 className="text-base font-semibold text-white">Race timeline</h2>
@@ -679,7 +685,15 @@ function SchedulePanel({ schedule, isGuideLoaded }: { schedule: ScheduleDay[]; i
                       className="flex items-start gap-3 text-xs leading-5 text-slate-200/90"
                     >
                       <dt className="w-24 shrink-0 font-semibold text-indigo-200">{item.time}</dt>
-                      <dd className="flex-1 text-slate-200/80">{item.activity}</dd>
+                      <dd className="flex-1 text-slate-200/80">
+                        <p>{item.activity}</p>
+                        {item.location && (
+                          <p className="mt-1 flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                            <MapPin className="h-3 w-3" />
+                            {item.location}
+                          </p>
+                        )}
+                      </dd>
                     </div>
                   ))}
                 </dl>
@@ -704,4 +718,240 @@ function SchedulePanel({ schedule, isGuideLoaded }: { schedule: ScheduleDay[]; i
       </div>
     </section>
   );
+}
+
+
+function LocationsPanel({ locations, isGuideLoaded }: { locations: string[]; isGuideLoaded: boolean }) {
+  const [activeLocation, setActiveLocation] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (locations.length === 0) {
+      setActiveLocation(null);
+      return;
+    }
+    if (!activeLocation || !locations.includes(activeLocation)) {
+      setActiveLocation(locations[0]);
+    }
+  }, [locations, activeLocation]);
+
+  const hasLocations = locations.length > 0;
+  const sanitizedLocation = activeLocation ? activeLocation.replace(/\s+/g, ' ').trim() : null;
+  const mapQuery = sanitizedLocation ? encodeURIComponent(sanitizedLocation) : null;
+  const mapSrc = mapQuery ? `https://www.google.com/maps?q=${mapQuery}&output=embed` : null;
+  const directionsHref = mapQuery ? `https://www.google.com/maps/dir/?api=1&destination=${mapQuery}` : null;
+
+  return (
+    <section className="glass-panel flex max-h-[640px] flex-col overflow-hidden border-white/10">
+      <div className="border-b border-white/10 px-5 py-4">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Event locations</p>
+        <h2 className="text-base font-semibold text-white">Navigate the venues</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {hasLocations ? (
+          <div className="flex h-full flex-col gap-4">
+            <div className="flex flex-wrap gap-2">
+              {locations.map((location) => {
+                const isActive = location === activeLocation;
+                return (
+                  <button
+                    key={location}
+                    type="button"
+                    onClick={() => setActiveLocation(location)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs transition',
+                      isActive
+                        ? 'border-white/60 bg-white/20 text-white'
+                        : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/25 hover:text-white',
+                    )}
+                  >
+                    {location}
+                  </button>
+                );
+              })}
+            </div>
+            {mapSrc && (
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/25">
+                <iframe
+                  key={activeLocation ?? 'map'}
+                  src={mapSrc}
+                  title={activeLocation ?? 'Selected location on Google Maps'}
+                  className="h-60 w-full"
+                  loading="lazy"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </div>
+            )}
+            {activeLocation && directionsHref && (
+              <div className="flex flex-col gap-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <MapPin className="h-4 w-4 text-indigo-200" />
+                  <span>{activeLocation}</span>
+                </div>
+                <a
+                  href={directionsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 self-start rounded-full border border-white/10 px-3 py-1 text-xs text-slate-200 transition hover:border-white/30 hover:text-white sm:self-auto"
+                >
+                  <Navigation className="h-3.5 w-3.5" />
+                  Get directions
+                </a>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-slate-400">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300">
+              <MapPin className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="font-medium text-slate-200">No locations yet</p>
+              <p className="text-xs text-slate-500">
+                {isGuideLoaded
+                  ? "This guide didn't list venue locations in the timetable."
+                  : 'Load an athlete guide to explore venue locations here.'}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+const LOCATION_KEYWORDS = [
+  'park',
+  'parks',
+  'gardens',
+  'garden',
+  'dock',
+  'docks',
+  'museum',
+  'room',
+  'rooms',
+  'car park',
+  'church',
+  'beach',
+  'hall',
+  'arena',
+  'centre',
+  'center',
+  'quay',
+  'harbour',
+  'harbor',
+  'street',
+  'road',
+  'school',
+  'club',
+  'pool',
+  'stadium',
+  'village',
+  'pavilion',
+  'plaza',
+  'hotel',
+  'promenade',
+  'bay',
+  'pier',
+  'marina',
+  'college',
+  'square',
+];
+
+function deriveLocations(schedule: ScheduleDay[]): string[] {
+  const unique = new Map<string, string>();
+  for (const day of schedule) {
+    for (const item of day.items) {
+      const candidate = extractLocationFromItem(item);
+      if (!candidate) continue;
+      const key = normalizeLocationKey(candidate);
+      if (!unique.has(key)) {
+        unique.set(key, cleanLocationName(candidate));
+      }
+    }
+  }
+  return Array.from(unique.values());
+}
+
+function extractLocationFromItem(item: ScheduleDay['items'][number]): string | null {
+  if (item.location && item.location.trim()) {
+    return cleanLocationName(item.location);
+  }
+  const inferred = inferLocationFromActivity(item.activity);
+  return inferred ? cleanLocationName(inferred) : null;
+}
+
+function cleanLocationName(value: string): string {
+  const normalized = value
+    .replace(/[\u2019\u2018]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/\s*-\s*/g, ' - ')
+    .trim();
+  return normalized.replace(/\s*\d{1,2}$/, '').trim();
+}
+
+function normalizeLocationKey(value: string): string {
+  return cleanLocationName(value).toLowerCase();
+}
+
+function inferLocationFromActivity(activity: string): string | null {
+  const text = activity.trim();
+  if (!text) {
+    return null;
+  }
+
+  const lower = text.toLowerCase();
+
+  const atIndex = lower.lastIndexOf(' at ');
+  if (atIndex !== -1 && atIndex < text.length - 4) {
+    const candidate = text.slice(atIndex + 4).trim();
+    if (looksLikeLocation(candidate)) {
+      return candidate;
+    }
+  }
+
+  const hyphenIndex = text.lastIndexOf(' - ');
+  if (hyphenIndex !== -1 && hyphenIndex < text.length - 3) {
+    const candidate = text.slice(hyphenIndex + 3).trim();
+    if (looksLikeLocation(candidate)) {
+      return candidate;
+    }
+  }
+
+  const colonIndex = text.lastIndexOf(':');
+  if (colonIndex !== -1 && colonIndex < text.length - 1) {
+    const candidate = text.slice(colonIndex + 1).trim();
+    if (looksLikeLocation(candidate)) {
+      return candidate;
+    }
+  }
+
+  const trailingMatch = text.match(/([A-Z][A-Za-z0-9()'&\-/.,]*(?:\s+[A-Z][A-Za-z0-9()'&\-/.,]*)*)$/);
+  if (trailingMatch) {
+    const candidate = trailingMatch[0].trim();
+    if (looksLikeLocation(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function looksLikeLocation(value: string): boolean {
+  const normalized = value.trim();
+  if (normalized.length < 3) {
+    return false;
+  }
+  const lower = normalized.toLowerCase();
+  if (lower === 'tbc' || lower === 'tba') {
+    return false;
+  }
+  if (!/[a-z]/i.test(normalized)) {
+    return false;
+  }
+  if (LOCATION_KEYWORDS.some((hint) => lower.includes(hint))) {
+    return true;
+  }
+  const words = normalized.split(/\s+/);
+  return words.length >= 2 && words.some((word) => /^[A-Z]/.test(word));
 }

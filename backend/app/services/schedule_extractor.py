@@ -1,3 +1,5 @@
+"""Heuristics for pulling structured schedules out of triathlon PDFs."""
+
 from __future__ import annotations
 
 import io
@@ -54,6 +56,45 @@ _HEADER_STRINGS = {
     "RACE START TIMES",
     "PRIZE-GIVING TIMES",
 }
+
+_LOCATION_HINTS = {
+    "park",
+    "parks",
+    "gardens",
+    "garden",
+    "dock",
+    "docks",
+    "museum",
+    "room",
+    "rooms",
+    "car park",
+    "church",
+    "beach",
+    "hall",
+    "arena",
+    "centre",
+    "center",
+    "quay",
+    "harbour",
+    "harbor",
+    "street",
+    "road",
+    "school",
+    "club",
+    "pool",
+    "stadium",
+    "village",
+    "pavilion",
+    "plaza",
+    "hotel",
+    "promenade",
+    "bay",
+    "pier",
+    "marina",
+    "college",
+    "square",
+}
+
 _TIME_PATTERN = re.compile(
     r"^(?P<time>\d{1,2}:\d{2}(?:\s*[\u2013\u2014-]\s*\d{1,2}:\d{2})?(?:\s*(?:AM|PM))?)",
     re.IGNORECASE,
@@ -72,6 +113,7 @@ _TIME_TOKEN_PATTERN = re.compile(
 
 
 def extract_schedule(file_bytes: bytes, chunks: Sequence[PageChunk]) -> List[ScheduleDay]:
+    """High-level entrypoint that prefers layout parsing and falls back to text."""
     pages = sorted({chunk.page for chunk in chunks if _looks_like_schedule_section(chunk.section)})
     if not pages:
         return []
@@ -90,6 +132,7 @@ def extract_schedule(file_bytes: bytes, chunks: Sequence[PageChunk]) -> List[Sch
 
 
 def _extract_with_layout(file_bytes: bytes, pages: Sequence[int]) -> List[ScheduleDay]:
+    """Use pdfplumber layout metadata to recover day-by-day schedule tables."""
     try:
         pdf = pdfplumber.open(io.BytesIO(file_bytes))
     except Exception:
@@ -105,10 +148,12 @@ def _extract_with_layout(file_bytes: bytes, pages: Sequence[int]) -> List[Schedu
             for day in days:
                 existing = collected.get(day.title)
                 if existing:
-                    seen = {(item.time, item.activity) for item in existing.items}
+                    seen = {(item.time, item.activity, item.location or "") for item in existing.items}
                     for item in day.items:
-                        if (item.time, item.activity) not in seen:
+                        key = (item.time, item.activity, item.location or "")
+                        if key not in seen:
                             existing.items.append(item)
+                            seen.add(key)
                 else:
                     collected[day.title] = day
         return list(collected.values())
@@ -117,6 +162,7 @@ def _extract_with_layout(file_bytes: bytes, pages: Sequence[int]) -> List[Schedu
 
 
 def _parse_schedule_page(page: "pdfplumber.page.Page") -> List[ScheduleDay]:  # type: ignore[name-defined]
+    """Parse a PDF page into grouped schedule rows using positional data."""
     words = page.extract_words(keep_blank_chars=False, use_text_flow=True)
     if not words:
         return []
@@ -139,6 +185,7 @@ def _parse_schedule_page(page: "pdfplumber.page.Page") -> List[ScheduleDay]:  # 
 
 
 def _group_words_by_line(words: Sequence[dict]) -> List[Tuple[float, List[dict]]]:
+    """Cluster words that share a similar baseline to approximate lines."""
     grouped: defaultdict[float, List[dict]] = defaultdict(list)
     for word in words:
         key = round(float(word["top"]), 1)
@@ -153,6 +200,7 @@ def _group_words_by_line(words: Sequence[dict]) -> List[Tuple[float, List[dict]]
 
 
 def _detect_day_rows(lines: Sequence[Tuple[float, List[dict]]]) -> List[Tuple[str, float]]:
+    """Identify lines that look like day headings to split the schedule."""
     day_rows: List[Tuple[str, float]] = []
     seen_titles: set[str] = set()
     for top, words in lines:
@@ -175,11 +223,12 @@ def _collect_items_for_range(
     start_top: float,
     end_top: float,
 ) -> List[ScheduleItem]:
+    """Gather schedule items that fall between two vertical positions."""
     entries = _build_day_entries(lines, start_top, end_top)
     if not entries:
         return []
     items: List[ScheduleItem] = []
-    seen: set[Tuple[str, str]] = set()
+    seen: set[Tuple[str, str, str]] = set()
     used_indices: set[int] = set()
 
     for idx, entry in enumerate(entries):
@@ -191,18 +240,27 @@ def _collect_items_for_range(
         used_indices.update(group_indices)
         group_entries = [entries[i] for i in group_indices]
         time_text = _normalize_time_tokens([item.text for item in group_entries])
-        desc_texts, desc_indices = _collect_description(entries, group_entries, used_indices)
-        if not desc_texts:
+        activity_entries, location_entries, desc_indices = _collect_description(entries, group_entries, used_indices)
+        if not activity_entries:
             continue
         used_indices.update(desc_indices)
-        activity = _clean_activity_text(" ".join(desc_texts))
+        raw_activity_text = " ".join(item.text for item in activity_entries)
+        activity = _clean_activity_text(raw_activity_text)
         if not activity:
             continue
-        key = (time_text, activity.lower())
+        location_text = None
+        if location_entries:
+            raw_location_text = " ".join(item.text for item in location_entries)
+            location_text = _clean_location_text(raw_location_text)
+        if not location_text:
+            activity, inferred_location = _split_activity_and_location_text(activity)
+            if inferred_location:
+                location_text = inferred_location
+        key = (time_text, activity.lower(), (location_text or "").lower())
         if key in seen:
             continue
         seen.add(key)
-        items.append(ScheduleItem(time=time_text, activity=activity))
+        items.append(ScheduleItem(time=time_text, activity=activity, location=location_text))
 
     return items
 
@@ -212,6 +270,7 @@ def _build_day_entries(
     start_top: float,
     end_top: float,
 ) -> List["_Entry"]:
+    """Convert raw word groups into normalized schedule entries."""
     words: List[dict] = []
     for top, line_words in lines:
         if top <= start_top or top >= end_top:
@@ -250,10 +309,12 @@ class _Entry:
 
 
 def _looks_like_time_word(text: str) -> bool:
+    """Check if a token resembles a time or time range."""
     return bool(re.match(r"^\d{1,2}:\d{2}(?:[\-\u2013\u2014]\d{1,2}:\d{2})?$", text))
 
 
 def _expand_time_group(entries: Sequence[_Entry], start_index: int) -> List[int]:
+    """Expand from a seed time index to capture adjoining time tokens."""
     group = [start_index]
     base = entries[start_index]
     idx = start_index + 1
@@ -272,7 +333,8 @@ def _collect_description(
     entries: Sequence[_Entry],
     time_group: Sequence[_Entry],
     used_indices: set[int],
-) -> Tuple[List[str], List[int]]:
+) -> Tuple[List[_Entry], List[_Entry], List[int]]:
+    """Build a description string from the remaining tokens in a line."""
     time_top = sum(item.top for item in time_group) / len(time_group)
     min_top = time_top - 12
     max_top = time_top + 16
@@ -291,14 +353,48 @@ def _collect_description(
         collected_indices.append(entry.index)
 
     if not collected:
-        return [], []
+        return [], [], []
 
     collected.sort(key=lambda item: (item.top, item.x0))
-    texts = [item.text for item in collected]
-    return texts, collected_indices
+    activity_entries, location_entries = _split_entries_by_column(collected)
+    return activity_entries, location_entries, collected_indices
+
+
+def _split_entries_by_column(entries: Sequence[_Entry]) -> Tuple[List[_Entry], List[_Entry]]:
+    """Split entries into left/right columns when a page uses two schedules."""
+    if not entries:
+        return [], []
+    unique_positions = sorted({round(item.x0, 1) for item in entries})
+    if len(unique_positions) <= 1:
+        return list(entries), []
+    gaps: List[Tuple[float, float]] = []
+    for left, right in zip(unique_positions, unique_positions[1:]):
+        gaps.append((right - left, (left + right) / 2))
+    if not gaps:
+        return list(entries), []
+    largest_gap, split_x = max(gaps, key=lambda pair: pair[0])
+    if largest_gap < 35:
+        return list(entries), []
+    activity_entries: List[_Entry] = []
+    location_entries: List[_Entry] = []
+    for entry in entries:
+        if entry.x0 >= split_x:
+            location_entries.append(entry)
+        else:
+            activity_entries.append(entry)
+    if not activity_entries or not location_entries:
+        return list(entries), []
+    activity_max_x = max(item.x1 for item in activity_entries)
+    location_min_x = min(item.x0 for item in location_entries)
+    if location_min_x - activity_max_x < 25:
+        return list(entries), []
+    activity_entries.sort(key=lambda item: (item.top, item.x0))
+    location_entries.sort(key=lambda item: (item.top, item.x0))
+    return activity_entries, location_entries
 
 
 def _clean_activity_text(value: str) -> str:
+    """Normalize schedule activity text by trimming artifacts."""
     cleaned = re.sub(r"\s+", " ", value).strip()
     if not cleaned:
         return ""
@@ -312,9 +408,113 @@ def _clean_activity_text(value: str) -> str:
     return cleaned.strip()
 
 
+
+
+def _clean_location_text(value: str) -> str | None:
+    """Normalize optional location text and filter noise."""
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    cleaned = cleaned.strip("-,:")
+    cleaned = re.sub(r"\s*\*+$", "", cleaned)
+    cleaned = re.sub(r"\s*\d{1,2}$", "", cleaned)
+    cleaned = cleaned.strip()
+    if not cleaned:
+        return None
+    if not _looks_like_location_text(cleaned):
+        return None
+    return cleaned
+
+
+def _looks_like_location_text(value: str) -> bool:
+    """Detect words that probably correspond to a location."""
+    text = value.strip()
+    if not text or len(text) < 3:
+        return False
+    lowered = text.lower()
+    if lowered in {"tbc", "tba"}:
+        return False
+    if sum(char.isalpha() for char in text) == 0:
+        return False
+    if len(text.split()) > 12:
+        return False
+    return True
+
+
+def _split_activity_and_location_text(value: str) -> Tuple[str, str | None]:
+    """Attempt to separate activity text from trailing location hints."""
+    text = value.strip()
+    if not text:
+        return "", None
+
+    candidates: list[tuple[str, str]] = []
+    lowered = text.lower()
+
+    idx = lowered.rfind(" at ")
+    if idx != -1:
+        left = text[:idx].strip(" -,:")
+        right = text[idx + 4 :].strip(" -,:")
+        if _looks_like_location_text(right):
+            candidates.append((left, right))
+
+    dash_variants = [" - ", f" {chr(8211)} ", f" {chr(8212)} "]
+    for sep in dash_variants:
+        idx = text.rfind(sep)
+        if idx != -1:
+            left = text[:idx].strip(" -,:")
+            right = text[idx + len(sep) :].strip(" -,:")
+            if _looks_like_location_text(right):
+                candidates.append((left, right))
+
+    idx = text.rfind(":")
+    if idx != -1:
+        left = text[:idx].strip()
+        right = text[idx + 1 :].strip(" -,:")
+        if _looks_like_location_text(right):
+            candidates.append((left, right))
+
+    for left, right in candidates:
+        cleaned_left = left.strip()
+        cleaned_right = right.strip()
+        if cleaned_left and cleaned_right:
+            return cleaned_left, cleaned_right
+
+    match = re.search(
+        r"^(?P<activity>.+?)\s+(?P<location>[A-Z][A-Za-z0-9\s()'&\-/.,]+)$",
+        text,
+    )
+    if match:
+        activity_part = match.group("activity").strip()
+        location_part = match.group("location").strip("-,: ")
+        if activity_part and location_part:
+            lowered_location = location_part.lower()
+            hint_positions = [
+                (lowered_location.find(hint), hint)
+                for hint in _LOCATION_HINTS
+                if hint in lowered_location
+            ]
+            hint_positions = [item for item in hint_positions if item[0] != -1]
+            if hint_positions:
+                hint_positions.sort(key=lambda item: item[0])
+                first_index, _ = hint_positions[0]
+                prefix_segment = location_part[:first_index].rstrip()
+                suffix_segment = location_part[first_index:].strip()
+                if prefix_segment:
+                    parts = prefix_segment.split()
+                    carry = ''
+                    if parts and parts[-1][:1].isupper():
+                        carry = parts.pop()
+                        suffix_segment = f"{carry} {suffix_segment}".strip()
+                    if parts:
+                        activity_part = f"{activity_part} {' '.join(parts)}".strip()
+                location_part = suffix_segment
+                if _looks_like_location_text(location_part):
+                    return activity_part, location_part
+
+    return text, None
+
 def _extract_from_text(chunks: Sequence[PageChunk]) -> List[ScheduleDay]:
-    sections: OrderedDict[str, List[Tuple[str, str]]] = OrderedDict()
-    seen: set[Tuple[str, str, str]] = set()
+    """Fallback parser that operates on plain text chunks when layout fails."""
+    sections: OrderedDict[str, List[Tuple[str, str, str | None]]] = OrderedDict()
+    seen: set[Tuple[str, str, str, str]] = set()
     current_title: str | None = None
 
     for chunk in chunks:
@@ -335,25 +535,36 @@ def _extract_from_text(chunks: Sequence[PageChunk]) -> List[ScheduleDay]:
             parsed = _parse_time_and_activity(line)
             if not parsed or current_title is None:
                 continue
-            time_value, activity = parsed
-            key = (current_title.lower(), time_value, activity.lower())
+            time_value, activity_raw = parsed
+            activity_text = _clean_activity_text(activity_raw)
+            if not activity_text:
+                continue
+            activity_text, inferred_location = _split_activity_and_location_text(activity_text)
+            location_text = _clean_location_text(inferred_location) if inferred_location else None
+            key = (
+                current_title.lower(),
+                time_value,
+                activity_text.lower(),
+                (location_text or "").lower(),
+            )
             if key in seen:
                 continue
             seen.add(key)
-            sections[current_title].append((time_value, activity))
+            sections.setdefault(current_title, []).append((time_value, activity_text, location_text))
 
     schedule: List[ScheduleDay] = []
     for title, entries in sections.items():
         if not entries:
             continue
         day = ScheduleDay(title=title)
-        for time_value, activity in entries:
-            day.items.append(ScheduleItem(time=time_value, activity=activity))
+        for time_value, activity, location in entries:
+            day.items.append(ScheduleItem(time=time_value, activity=activity, location=location))
         schedule.append(day)
     return schedule
 
 
 def _looks_like_schedule_section(section_title: str) -> bool:
+    """Check whether a section title likely represents a timetable."""
     if not section_title:
         return False
     lowered = section_title.lower()
@@ -364,6 +575,7 @@ def _looks_like_schedule_section(section_title: str) -> bool:
 
 
 def _should_skip_line(line: str) -> bool:
+    """Filter out decorative or irrelevant lines before parsing."""
     cleaned = re.sub(r"\s+", " ", line).strip()
     if not cleaned:
         return True
@@ -381,6 +593,7 @@ def _should_skip_line(line: str) -> bool:
 
 
 def _parse_day_label(line: str) -> str | None:
+    """Attempt to build a normalized day label from a text line."""
     tokens = re.findall(r"[A-Za-z0-9]+", line)
     if not tokens:
         return None
@@ -397,6 +610,7 @@ def _parse_day_label(line: str) -> str | None:
 
 
 def _assemble_day_label(day_name: str, remainder_tokens: Iterable[str]) -> str | None:
+    """Combine tokens into a day label with month/date context."""
     parts = [day_name]
     has_detail = False
     for token in remainder_tokens:
@@ -416,6 +630,7 @@ def _assemble_day_label(day_name: str, remainder_tokens: Iterable[str]) -> str |
 
 
 def _parse_time_and_activity(line: str) -> Tuple[str, str] | None:
+    """Split a line into time portion and the subsequent description."""
     match = _TIME_PATTERN.match(line)
     if not match:
         return None
@@ -436,16 +651,19 @@ def _parse_time_and_activity(line: str) -> Tuple[str, str] | None:
 
 
 def _normalize_title(value: str) -> str:
+    """Title-case and compress whitespace in headings."""
     cleaned = re.sub(r"\s+", " ", value).strip()
     return cleaned.title()
 
 
 def _is_time_token(token: str) -> bool:
+    """Return True when a token resembles part of a time expression."""
     stripped = token.strip()
     return bool(_TIME_TOKEN_PATTERN.match(stripped) or re.match(r"^-?\d{1,2}:\d{2}$", stripped))
 
 
 def _normalize_time_tokens(tokens: Sequence[str]) -> str:
+    """Join discrete time tokens into a canonical representation."""
     joined = " ".join(tokens)
     joined = re.sub(r"\s*[\u2013\u2014-]\s*", " - ", joined)
     joined = re.sub(r"\s+", " ", joined)
@@ -453,5 +671,6 @@ def _normalize_time_tokens(tokens: Sequence[str]) -> str:
 
 
 def _normalize_description(tokens: Sequence[str]) -> str:
+    """Clean up extraneous whitespace from description tokens."""
     text = " ".join(tokens)
     return re.sub(r"\s+", " ", text).strip()

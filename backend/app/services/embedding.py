@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+"""Wrapper helpers for computing OpenAI embeddings."""
+
+from __future__ import annotations
 
 from typing import Iterable, List
 
@@ -9,6 +11,7 @@ from backend.app.config import get_settings
 
 
 def embed_chunks(texts: Iterable[str]) -> List[np.ndarray]:
+    """Embed a collection of chunk texts and return numpy vectors."""
     settings = get_settings()
     embeddings = OpenAIEmbeddings(
         api_key=settings.openai_api_key,
@@ -18,6 +21,7 @@ def embed_chunks(texts: Iterable[str]) -> List[np.ndarray]:
 
 
 def embed_query(text: str) -> np.ndarray:
+    """Embed a single query string for similarity search."""
     settings = get_settings()
     vector = OpenAIEmbeddings(
         api_key=settings.openai_api_key,

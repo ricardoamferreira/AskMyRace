@@ -1,3 +1,5 @@
+"""FastAPI entrypoint for Ask My Race; handles ingest, demos, and Q&A requests."""
+
 from __future__ import annotations
 
 import re
@@ -77,12 +79,15 @@ TRANSITION_LINE_PATTERN = re.compile(
 
 
 class RateLimiter:
+    """Fixed-window limiter keyed by client IP or forwarded address."""
     def __init__(self, limit: int, window_seconds: int) -> None:
+        """Initialize the limiter with a quota and window size in seconds."""
         self.limit = limit
         self.window = window_seconds
         self._records: Dict[str, Deque[float]] = defaultdict(deque)
 
     def check(self, key: str) -> bool:
+        """Return True if another request is allowed and record its timestamp."""
         now = time.monotonic()
         window_start = now - self.window
         queue = self._records[key]
@@ -99,6 +104,7 @@ ask_rate_limiter = RateLimiter(limit=30, window_seconds=60)
 
 
 def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
+    """Parse the PDF, embed its chunks, and register the document for later retrieval."""
     chunks, page_count = load_pdf_chunks(file_bytes)
     if not chunks:
         raise ValueError("Could not extract text from the PDF.")
@@ -136,7 +142,7 @@ def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
         {
             "title": section.title,
             "items": [
-                {"time": item.time, "activity": item.activity}
+                {"time": item.time, "activity": item.activity, "location": item.location}
                 for item in section.items
             ],
         }
@@ -153,6 +159,7 @@ def ingest_pdf(file_bytes: bytes, filename: str) -> UploadResponse:
 
 
 def list_example_guides() -> List[ExampleGuide]:
+    """Return a list of built-in demo guides discovered under race_examples/."""
     if not EXAMPLES_DIR.exists():
         return []
 
@@ -167,6 +174,7 @@ def list_example_guides() -> List[ExampleGuide]:
 
 
 def _looks_like_triathlon_guide(chunks: Iterable[PageChunk]) -> bool:
+    """Heuristically validate that the uploaded PDF references triathlon terminology."""
     pages = list(chunks)
     sample_text = " ".join(chunk.text for chunk in pages[:10])
     lower_text = sample_text.lower()
@@ -175,11 +183,13 @@ def _looks_like_triathlon_guide(chunks: Iterable[PageChunk]) -> bool:
 
 
 def _slugify(value: str) -> str:
+    """Generate a filesystem-safe slug from a filename stem."""
     cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower())
     return cleaned.strip("-") or value.lower()
 
 
 def _humanize(value: str) -> str:
+    """Turn a filename stem into a readable title for display purposes."""
     cleaned = re.sub(r"[_-]+", " ", value)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned.title()
@@ -187,6 +197,7 @@ def _humanize(value: str) -> str:
 
 
 def _needs_transition(question: str, transition: str) -> bool:
+    """Check whether the user question references the given transition."""
     lower = question.lower()
     if transition == "1":
         keywords = (
@@ -212,6 +223,7 @@ def _needs_transition(question: str, transition: str) -> bool:
 
 
 def _has_transition_schedule(text: str, transition: str) -> bool:
+    """Return True when the chunk text appears to contain schedule info for a transition."""
     lower = text.lower()
     if f"transition {transition}" not in lower:
         return False
@@ -225,6 +237,7 @@ def _has_transition_schedule(text: str, transition: str) -> bool:
 
 
 def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk], question: str) -> List[Chunk]:
+    """Ensure schedule-focused answers include nearby transition chunks if missing."""
     question_lower = question.lower()
     needs_t1 = _needs_transition(question_lower, "1")
     needs_t2 = _needs_transition(question_lower, "2")
@@ -246,6 +259,7 @@ def _augment_with_schedule_chunks(entry: DocumentEntry, selected: List[Chunk], q
 
 
 def _extract_transition_schedule_notes(entry: DocumentEntry, question: str, selected: List[Chunk]) -> List[str]:
+    """Derive helper notes summarizing transition windows for the LLM prompt."""
     question_lower = question.lower()
     notes: list[str] = []
     if _needs_transition(question_lower, "1"):
@@ -256,6 +270,7 @@ def _extract_transition_schedule_notes(entry: DocumentEntry, question: str, sele
 
 
 def _build_transition_notes(entry: DocumentEntry, transition: str) -> List[str]:
+    """Collect the most relevant schedule mentions for a specific transition."""
     collected: list[tuple[str | None, str]] = []
     seen: set[tuple[str | None, str]] = set()
     for chunk in entry.chunks:
@@ -274,6 +289,7 @@ def _build_transition_notes(entry: DocumentEntry, transition: str) -> List[str]:
 
 
 def _select_transition1_notes(entries: List[tuple[str | None, str]]) -> List[str]:
+    """Summarize T1 check-in and race morning windows from candidate schedule entries."""
     pre_candidates = [item for item in entries if item[0] and "saturday" in item[0].lower()]
     if not pre_candidates:
         pre_candidates = [item for item in entries if item[0] and "friday" in item[0].lower()]
@@ -294,6 +310,7 @@ def _select_transition1_notes(entries: List[tuple[str | None, str]]) -> List[str
 
 
 def _select_transition2_notes(entries: List[tuple[str | None, str]]) -> List[str]:
+    """Highlight likely red-bag check-in windows for Transition 2."""
     friday = [item for item in entries if item[0] and "friday" in item[0].lower()]
     saturday = [item for item in entries if item[0] and "saturday" in item[0].lower()]
     notes = []
@@ -310,11 +327,13 @@ def _select_transition2_notes(entries: List[tuple[str | None, str]]) -> List[str
 
 
 def _is_race_morning_time(time_range: str) -> bool:
+    """Treat early-morning time ranges as race morning slots."""
     start_hour = int(time_range.split(":")[0])
     return start_hour <= 6
 
 
 def _extract_transition_notes_from_text(text: str, transition: str) -> List[tuple[str | None, str]]:
+    """Parse raw text for day labels and time ranges that mention a transition."""
     results: list[tuple[str | None, str]] = []
     for match in TRANSITION_LINE_PATTERN.finditer(text):
         if match.group("num") == transition:
@@ -342,6 +361,7 @@ def _extract_transition_notes_from_text(text: str, transition: str) -> List[tupl
 
 
 def _require_rate_limit(limiter: RateLimiter, request: Request, error_message: str) -> None:
+    """Guard an endpoint by enforcing the configured per-IP rate limits."""
     identifier = request.client.host if request.client else "anonymous"
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -351,6 +371,7 @@ def _require_rate_limit(limiter: RateLimiter, request: Request, error_message: s
 
 
 def _check_text_for_abuse(text: str) -> None:
+    """Reject user input containing phrases that attempt to override safety rules."""
     for pattern in BANNED_PATTERNS:
         if pattern.search(text):
             raise HTTPException(
@@ -360,6 +381,7 @@ def _check_text_for_abuse(text: str) -> None:
 
 
 def _ensure_pdf_size(file: UploadFile, file_bytes: bytes) -> None:
+    """Validate basic upload constraints such as size, presence, and PDF extension."""
     size = len(file_bytes)
     if size > MAX_PDF_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="PDF exceeds 80 MB limit.")
@@ -374,6 +396,7 @@ def _ensure_pdf_size(file: UploadFile, file_bytes: bytes) -> None:
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdf(request: Request, file: UploadFile = File(...)) -> UploadResponse:
+    """Handle PDF uploads, rejecting invalid files and returning the ingested document info."""
     _require_rate_limit(upload_rate_limiter, request, "Too many uploads from this IP. Try again later.")
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
@@ -387,11 +410,13 @@ async def upload_pdf(request: Request, file: UploadFile = File(...)) -> UploadRe
 
 @app.get("/examples", response_model=List[ExampleGuide])
 async def get_examples() -> List[ExampleGuide]:
+    """List the available demo guides for quick testing in the UI."""
     return list_example_guides()
 
 
 @app.post("/examples/{slug}", response_model=UploadResponse)
 async def load_example(slug: str) -> UploadResponse:
+    """Load a demo guide by slug and ingest it as if it were freshly uploaded."""
     for guide in list_example_guides():
         if guide.slug == slug:
             file_path = EXAMPLES_DIR / guide.filename
@@ -405,6 +430,7 @@ async def load_example(slug: str) -> UploadResponse:
 
 @app.post("/ask", response_model=AskResponse)
 async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
+    """Answer a question by retrieving similar chunks and invoking the chat model."""
     _require_rate_limit(ask_rate_limiter, request, "Too many questions from this IP. Please slow down.")
     _check_text_for_abuse(payload.question)
     if payload.context:
@@ -447,6 +473,7 @@ async def ask_question(request: Request, payload: AskRequest) -> AskResponse:
 
 
 def _summarize_excerpt(text: str) -> str:
+    """Trim chunk excerpts to a manageable size for API responses."""
     cleaned = " ".join(text.split())
     if len(cleaned) <= 220:
         return cleaned
@@ -455,4 +482,6 @@ def _summarize_excerpt(text: str) -> str:
 
 @app.get("/health")
 def healthcheck() -> dict[str, str]:
+    """Simple readiness probe consumed by deployment platforms."""
     return {"status": "ok"}
+

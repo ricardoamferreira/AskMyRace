@@ -1,8 +1,11 @@
+"""Configuration helpers for Ask My Race backend services."""
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application settings pulled from environment variables."""
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -29,4 +32,5 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
+    """Return a new Settings instance; relies on pydantic caching."""
     return Settings()

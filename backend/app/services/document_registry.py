@@ -1,3 +1,5 @@
+"""Lightweight in-memory document registry used by the retrieval pipeline."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +11,7 @@ import numpy as np
 
 @dataclass
 class Chunk:
+    """Single vectorized passage extracted from an uploaded PDF."""
     id: str
     text: str
     page: int
@@ -19,18 +22,22 @@ class Chunk:
 
 @dataclass
 class ScheduleItem:
+    """Structured schedule entry parsed from the athlete guide."""
     time: str
     activity: str
+    location: str | None = None
 
 
 @dataclass
 class ScheduleDay:
+    """Day-level grouping of schedule items for easier rendering."""
     title: str
     items: List[ScheduleItem] = field(default_factory=list)
 
 
 @dataclass
 class DocumentEntry:
+    """Container for the uploaded PDF, its chunks, and extracted schedule."""
     id: str
     filename: str
     page_count: int
@@ -39,6 +46,7 @@ class DocumentEntry:
     schedule: List[ScheduleDay] = field(default_factory=list)
 
     def similarity_search(self, query_embedding: np.ndarray, top_k: int) -> List[Chunk]:
+        """Compute cosine similarity and return the highest scoring chunks with neighbors."""
         if not self.chunks:
             return []
         embeddings = np.vstack([chunk.embedding for chunk in self.chunks])
@@ -71,22 +79,27 @@ class DocumentEntry:
 
 
 class DocumentRegistry:
+    """In-memory store keyed by document id for quick lookups."""
     def __init__(self) -> None:
         self._store: Dict[str, DocumentEntry] = {}
 
     def add(self, entry: DocumentEntry) -> None:
+        """Add a document entry, replacing any previous version."""
         self._store[entry.id] = entry
 
     def get(self, document_id: str) -> DocumentEntry | None:
+        """Return the entry for the document id if it exists."""
         return self._store.get(document_id)
 
     def require(self, document_id: str) -> DocumentEntry:
+        """Fetch an entry or raise if it is missing from the registry."""
         entry = self.get(document_id)
         if not entry:
             raise KeyError(f"Document {document_id} not found")
         return entry
 
     def list(self) -> List[DocumentEntry]:
+        """Return all entries currently stored in the registry."""
         return list(self._store.values())
 
 
@@ -94,6 +107,7 @@ _registry: DocumentRegistry | None = None
 
 
 def get_registry() -> DocumentRegistry:
+    """Return the cached singleton registry instance."""
     global _registry
     if _registry is None:
         _registry = DocumentRegistry()
